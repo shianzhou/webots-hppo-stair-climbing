@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.idea/
+.vscode/
+
+# logs
+log/
+
+# models
+*.pt
+*.pth
+
+#picture
+*.png
+
+#path
+python_scripts/PPO/checkpoint_h/
+libraries/
+
+python_scripts/PPO/utils/
+python_scripts/PPO/models/
