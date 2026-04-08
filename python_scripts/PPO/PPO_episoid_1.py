@@ -1,7 +1,5 @@
 import os
 
-import torch
-
 from python_scripts.PPO.PPO_episoid_2_1 import PPO_tai_episoid
 from python_scripts.PPO.checkpoint_utils import (
     ensure_dir as _ensure_dir,
@@ -10,6 +8,7 @@ from python_scripts.PPO.checkpoint_utils import (
     load_tai_model,
     next_log_file as _next_log_file,
 )
+from python_scripts.PPO.RobotRun0 import RobotRun0
 from python_scripts.PPO.training_manager import TrainingManager
 from python_scripts.PPO.hppo import HPPO as d_hppo
 from python_scripts.PPO.hppo_01 import HPPO as hppo
@@ -76,6 +75,13 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
     MAX_TOTAL_EPISODE = 3000
 
     env = Environment()  # 仍然只有一个 env
+    robot_run0 = RobotRun0(
+        decision_agent=decision_hppo_agent,
+        training_manager=training_manager,
+        log_writer_decision=log_writer_decision,
+        log_file_latest_decision=log_file_latest_decision,
+        decision_checkpoint_dir=decision_checkpoint_dir,
+    )
 
     while total_episode < MAX_TOTAL_EPISODE:
 
@@ -84,27 +90,15 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
         print(f"==============================")
 
         # ---------- 上层决策 ----------
-        # 修复：添加 imgs 参数
         d_steps = 0
         d_obs_img, d_obs_tensor = env.get_img(d_steps)
         d_robot_state = env.get_robot_state()
-        d_obs = (d_obs_tensor, d_robot_state)
-        
-        # 调试：打印输入形状和值范围
-        print(f"📊 d_obs_tensor shape: {d_obs_tensor.shape}, range: [{d_obs_tensor.min():.3f}, {d_obs_tensor.max():.3f}]")
-        print(f"📊 d_robot_state shape: {len(d_robot_state) if isinstance(d_robot_state, list) else d_robot_state.shape}")
-        
-        decision_dict = decision_hppo_agent.choose_action(
-            obs=d_obs,
-            x_graph=d_robot_state
-        )
+        decision_dict, decision, decision_state = robot_run0.choose_action(d_obs_tensor, d_robot_state)
+        pre_branch_catch_success = catch_success
+        route_info = robot_run0.judge_route(decision=decision, catch_success=pre_branch_catch_success)
+        route = route_info['route']
 
-        # decision ∈ {0,1}
-        decision = int(decision_dict['discrete_action'][0])
-        print(f"上层决策 decision = {decision} (0=抓取, 1=爬梯)")
-        decision = 0
-
-        if decision == 0:
+        if route == 'catch':
             print("🟢 进入【抓取训练阶段】")
             # catch_success由上一轮保持，不重置（除非抬腿完成后）
             env.reset()
@@ -164,12 +158,8 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
                 print(f"保存抓取模型到: {catch_path}")
 
                 ## 应该还有一个存储模型然后就够了
-        else:
+        elif route == 'tai':
             print("🟢 进入【抬腿训练阶段】")    
-            # 只有抓取成功后才允许抬腿；未抓取成功则跳过本轮抬腿
-            if not catch_success:
-                print("⚠️ 未检测到抓取成功，本轮跳过抬腿训练。")
-                continue
             # if success_flag1 == 1:
             #     success_catch += 1
             #     log_writer_catch.add(success_catch=success_catch)
@@ -186,72 +176,18 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
             catch_success = False
             env.reset()
             env.wait(500)
-
-        # ===== 决策奖励计算（基于状态判断是否正确） =====
-        decision_reward = 0.0
-        if decision == 0:  # 决策选择抓取
-            if catch_success:
-                # 已经抓取成功还选择抓取，决策错误！
-                decision_reward = -15.0
-                print("❌ 决策错误：已抓取成功还选择抓取，惩罚-15.0")
-            else:
-                # 未抓取时选择抓取，决策正确
-                decision_reward = 5.0
-                print("✅ 决策正确：未抓取状态选择抓取，奖励+5.0")
-        else:  # decision == 1，决策选择抬腿
-            if catch_success:
-                # 已抓取成功且选择抬腿，决策正确
-                decision_reward = 10.0
-                print("✅ 决策正确：已抓取状态选择抬腿，奖励+10.0")
-            else:
-                # 未抓取却选择抬腿，决策错误
-                decision_reward = -10.0
-                print("❌ 决策错误：未抓取状态选择抬腿，惩罚-10.0")
-        
-        # 记录决策日志
-        log_writer_decision.add(episode_num=total_episode)
-        log_writer_decision.add(decision=decision)
-        log_writer_decision.add(decision_reward=decision_reward)
-        log_writer_decision.add(catch_success=int(catch_success))
-        
-        # 决策智能体需要 state 包含 (x, state, x_graph)，将机器人状态复用为图输入以满足长度要求
-        decision_state = (d_obs_tensor, d_robot_state, d_robot_state)
-        decision_hppo_agent.store_transition(
-            state=decision_state,
-            action=decision,
-            reward=decision_reward,  # 使用计算得到的奖励
-            next_state=None,
-            done=True,
-            value=decision_dict['value'],
-            log_prob=decision_dict['discrete_log_prob']
-        )
-
-        # 记录决策的value值
-        log_writer_decision.add(decision_value=decision_dict['value'])
-        
-        # 【方案A】使用训练管理器控制学习频率
-        training_manager.increment_decision()
-        if training_manager.should_learn_decision():
-            decision_loss = decision_hppo_agent.learn()
-            print(f'【决策模型学习】{training_manager.get_status()} | decision_loss: {decision_loss:.6f}')
-            log_writer_decision.add(decision_loss=decision_loss)
         else:
-            # 累积经验但不学习
-            print(f'【决策模型累积经验】{training_manager.get_status()}')
-            decision_loss = 0
-        
-        # 保存决策日志
-        log_writer_decision.save_catch(log_file_latest_decision)
+            print("🟡 决策不满足执行条件，本轮不进入抓取/抬腿，直接重新决策。")
 
-        # 定期保存决策智能体
-        if total_episode % 50 == 0:
-            dec_path = os.path.join(decision_checkpoint_dir, f"decision_hppo_{total_episode}.ckpt")
-            dec_ckpt = {
-                'policy': decision_hppo_agent.policy.state_dict(),
-                'optimizer': decision_hppo_agent.optimizer.state_dict(),
-                'episode': total_episode
-            }
-            torch.save(dec_ckpt, dec_path)
+        robot_run0.finalize(
+            total_episode=total_episode,
+            decision=decision,
+            decision_dict=decision_dict,
+            decision_state=decision_state,
+            route=route,
+            pre_branch_catch_success=pre_branch_catch_success,
+            post_branch_catch_success=catch_success,
+        )
 
         total_episode += 1
 
