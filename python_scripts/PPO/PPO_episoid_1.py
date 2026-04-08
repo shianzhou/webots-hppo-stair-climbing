@@ -231,6 +231,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
     # ===== 模型保存目录（统一，使用配置的新路径） =====
     catch_checkpoint_dir = path_list['model_path_catch_PPO_h']
     decision_checkpoint_dir = path_list['model_path_decision_PPO_h']
+    catch_save_interval = 500
     _ensure_dir(catch_checkpoint_dir)
     _ensure_dir(decision_checkpoint_dir)
 
@@ -302,6 +303,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
             env.reset()
             env.wait(500)
             steps = 0
+            done = 0
             # 直接使用外层的episode_num，不用for循环
             log_writer_catch.add(episode_num=episode_num)
             print(f"<<<<<<<<<第{episode_num}周期")  # 打印当前周期
@@ -348,6 +350,11 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
                 print("已执行")
                 if done == 1 or steps >= max_steps_per_episode:
                     break
+
+            if done == 1 and total_episode % catch_save_interval == 0:
+                catch_path = os.path.join(catch_checkpoint_dir, f"catch_hppo_{total_episode}.ckpt")
+                hppo_agent.save_checkpoint(catch_path, episode=total_episode)
+                print(f"保存抓取模型到: {catch_path}")
 
                 ## 应该还有一个存储模型然后就够了
         else:

@@ -72,14 +72,14 @@ class SupervisorRobot:
         while True:
             with open('E:\\project_MultiAgent_h_change\\python_scripts\\PPO\\resetFlag.txt', 'r') as file:
                 flag = file.read()
-                print("attention!!!!!!!!!!!!!!!!!!! new_ti_zi make sense11111111")
-                print(flag)
+                # print("attention!!!!!!!!!!!!!!!!!!! new_ti_zi make sense11111111")
+                # print(flag)
                 if flag == '0':
                     with open('E:\\project_MultiAgent_h_change\\python_scripts\\PPO\\resetFlag.txt', 'r+') as file:
                         file.write('1')
                     self.robot.simulationResetPhysics()
                     self.reset()
-                    print("attention!!!!!!!!!!!!!!!!!!! new_ti_zi make sense22222222222")
+                    # print("attention!!!!!!!!!!!!!!!!!!! new_ti_zi make sense22222222222")
             self.robot.step(self.timestep)
     
 supervisorRobot = SupervisorRobot()

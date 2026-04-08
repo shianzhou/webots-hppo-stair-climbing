@@ -378,3 +378,14 @@ class HPPO:
         self._clear_buffer()
 
         return loss_discrete / self.policy_update_epochs,loss_continuous / self.policy_update_epochs
+
+    def save_checkpoint(self, save_path, episode=None):
+        checkpoint = {
+            "episode": episode,
+            "policy": self.policy.state_dict(),
+            "optimizer_hppo": self.optimizer.state_dict() if self.optimizer else None,
+            "optimizer_d": self.optimizer_d.state_dict() if self.optimizer_d else None,
+            "optimizer_c": self.optimizer_c.state_dict() if self.optimizer_c else None,
+            "optimizer_v": self.optimizer_v.state_dict() if self.optimizer_v else None,
+        }
+        torch.save(checkpoint, save_path)
