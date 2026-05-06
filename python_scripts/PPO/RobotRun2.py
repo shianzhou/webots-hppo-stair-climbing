@@ -9,6 +9,7 @@ class RobotRun(Darwin):
     """Execute one lower-body stepping action and return environment feedback."""
 
     _prev_distance = None
+    _prev_center_error = None
     _prev_foot_height = None
 
     motor_names = (
@@ -29,6 +30,12 @@ class RobotRun(Darwin):
     acc_high = [560, 530, 700]
     gyro_low = [500, 500, 500]
     gyro_high = [520, 520, 520]
+
+    def _log_constraint_trigger(self, name, details=""):
+        msg = f"[Constraint Triggered] step={self.step} | {name}"
+        if details:
+            msg += f" | {details}"
+        print(msg)
 
     def __init__(
         self,
@@ -67,11 +74,19 @@ class RobotRun(Darwin):
         self.success_dist_thresh = 0.04
         self.distance_reward_scale = 15.0
         self.proximity_reward_scale = 5.0
+        self.progress_reward_scale = 80.0
+        self.center_progress_reward_scale = 120.0
+        self.lateral_penalty_scale = 4.0
         self.action_penalty_scale = 0.02
+        self.step_penalty_scale = 0.012
         self.collision_penalty = -8.0
-        self.success_reward = 50.0
+        self.success_reward = 400.0
+        self.success_bonus_scale = 120.0
         self.wrong_touch_penalty = -2.0
         self.failed_touch_penalty = -5.0
+        self.miss_penalty_base = 4.0
+        self.miss_penalty_scale = 12.0
+        self.far_penalty = 3.0
         self.notouch_penalty = -10.0
 
         self.action_settle_timeout = 100
@@ -154,11 +169,18 @@ class RobotRun(Darwin):
     def _check_imu_limits(self):
         acc = self.accelerometer.getValues()
         gyro = self.gyro.getValues()
+        acc_ok = all(self.acc_low[i] < acc[i] < self.acc_high[i] for i in range(3))
+        gyro_ok = all(self.gyro_low[i] < gyro[i] < self.gyro_high[i] for i in range(3))
+        print(f"  [IMU] acc={[f'{v:.1f}' for v in acc]} (ok={acc_ok}) | gyro={[f'{v:.1f}' for v in gyro]} (ok={gyro_ok})")
         for i in range(3):
             if not (
                 self.acc_low[i] < acc[i] < self.acc_high[i]
                 and self.gyro_low[i] < gyro[i] < self.gyro_high[i]
             ):
+                print(
+                    f"    ⚠️ IMU 超出范围 [i={i}] acc[{i}]={acc[i]} (range {self.acc_low[i]}-{self.acc_high[i]}) | "
+                    f"gyro[{i}]={gyro[i]} (range {self.gyro_low[i]}-{self.gyro_high[i]})"
+                )
                 return False
         return True
 
@@ -197,12 +219,16 @@ class RobotRun(Darwin):
         return any(sensor.getValue() > 0.0 for sensor in self.touch)
 
     def _read_left_foot_touch(self, wait_ms=2000):
-        if not self._has_foot_contact():
-            return False
+        pre_vals = {
+            'foot_L1': self.touch[0].getValue(),
+            'foot_L2': self.touch[1].getValue(),
+            'foot_L3': self.touch[2].getValue(),
+        }
+        print(f"  [踩踏前传感器] {pre_vals}")
 
-        print("___________")
-        for sensor in self.touch:
-            print(sensor.getValue())
+        if not self._has_foot_contact():
+            print("  [诊断] 未检测到脚底接触，跳过闭合/判定")
+            return False
 
         timer = 0
         while self.robot.step(self.timestep) != -1:
@@ -212,30 +238,57 @@ class RobotRun(Darwin):
 
         for i, sensor in enumerate(self.touch):
             self.touch_value[i] = sensor.getValue()
-        return any(value > 0.0 for value in self.touch_value)
+        post_vals = {
+            'foot_L1': self.touch[0].getValue(),
+            'foot_L2': self.touch[1].getValue(),
+            'foot_L3': self.touch[2].getValue(),
+        }
+        print(f"  [踩踏后传感器] touch_value={self.touch_value} | all_foot={post_vals}")
+        success = any(value > 0.0 for value in self.touch_value)
+        failed = all(value == 0.0 for value in self.touch_value)
+        print(f"  [传感器读取结果] touch_value={self.touch_value} | success={int(success)} | failed={int(failed)}")
+        return success
 
-    def _compute_reward(self, distance, done, goal, collision, touch_success):
-        if RobotRun._prev_distance is not None:
-            reward = (RobotRun._prev_distance - distance) * self.distance_reward_scale
+    def _compute_reward(self, distance, foot_x, foot_y, done, goal, collision, touch_success):
+        dx = float(self.goal[0]) - float(foot_x)
+        dy = float(self.goal[1]) - float(foot_y)
+
+        reward = -distance * self.distance_reward_scale
+        if RobotRun._prev_distance is None:
+            reward -= distance
         else:
-            reward = -distance
+            reward += (RobotRun._prev_distance - distance) * self.progress_reward_scale
 
-        reward += max(0.0, (0.5 - distance) * self.proximity_reward_scale)
+        center_error = math.sqrt(dx ** 2 + (2.8 * dy) ** 2)
+        reward -= 4.0 * center_error
+        reward -= self.lateral_penalty_scale * abs(dy)
+        if RobotRun._prev_center_error is not None:
+            reward += (RobotRun._prev_center_error - center_error) * self.center_progress_reward_scale
+
+        if distance > 0.25:
+            reward -= self.far_penalty
+
         reward -= self.action_penalty_scale * (
             abs(self.action_leg_upper) + abs(self.action_leg_lower) + abs(self.action_ankle)
         )
-        reward -= 0.05 * float(self.step)
+        reward -= self.step_penalty_scale * float(self.step)
 
         if collision:
             reward += self.collision_penalty
 
         if done == 1:
             if touch_success:
-                reward += self.success_reward if goal == 1 else self.wrong_touch_penalty
+                if goal == 1:
+                    closeness_ratio = max(0.0, (self.success_dist_thresh - distance) / self.success_dist_thresh)
+                    reward += self.success_reward + self.success_bonus_scale * closeness_ratio
+                else:
+                    miss_ratio = min(1.0, max(0.0, (distance - self.success_dist_thresh) / self.success_dist_thresh))
+                    reward -= self.miss_penalty_base + self.miss_penalty_scale * miss_ratio
+                    reward += self.wrong_touch_penalty
             else:
                 reward += self.notouch_penalty
 
-        return reward
+        return reward, center_error
 
     def _refresh_next_state(self):
         for i in range(min(20, len(self.motors_sensors))):
@@ -250,19 +303,29 @@ class RobotRun(Darwin):
 
         if int(self.step) <= 0:
             RobotRun._prev_distance = None
+            RobotRun._prev_center_error = None
             RobotRun._prev_foot_height = None
 
+        print(
+            f"\n[Step {int(self.step)}] "
+            f"leg_action={self.action_leg_upper:.3f},{self.action_leg_lower:.3f},{self.action_ankle:.3f} | "
+            f"goal={self.goal}"
+        )
+
+        # 先将目标位夹紧到允许范围，避免“刚进入踩踏阶段就因目标越界直接结束”
+        target = self._apply_joint_limits()
+        print(f"  [关节目标] raw={self.next[0]:.3f},{self.next[1]:.3f},{self.next[2]:.3f} | clamped={target}")
+
         if not self._check_joint_limits():
-            print("关节角度越界，结束回合")
+            self._log_constraint_trigger('joint_limits', 'future_state still out of limits after clamp')
             self._refresh_next_state()
             return self._finish(reward=0.0, done=1, good=0, goal=0, count=0)
 
         if not self._check_imu_limits():
-            print("传感器数据异常，结束回合")
+            self._log_constraint_trigger('imu_limits', 'accelerometer/gyro out of threshold')
             self._refresh_next_state()
             return self._finish(reward=0.0, done=1, good=0, goal=0, count=0)
 
-        target = self._apply_joint_limits()
         self._set_leg_targets(target)
         reached, used_frames = self._wait_leg_target_reached(target)
         print(
@@ -271,6 +334,9 @@ class RobotRun(Darwin):
         )
 
         distance = self._read_step_distance_after_action()
+        foot_gps_now = self.foot_gps1.getValues()
+        foot_x = float(foot_gps_now[1])
+        foot_y = float(foot_gps_now[2])
         goal = 0
         done = 0
         good = 1
@@ -278,31 +344,45 @@ class RobotRun(Darwin):
         touch_success = False
 
         if self._has_collision():
-            print("发生碰撞，结束回合")
+            self._log_constraint_trigger('collision', 'arm/leg touch sensors are active')
             RobotRun._prev_distance = None
             RobotRun._prev_foot_height = None
             return self._finish(reward=self.collision_penalty, done=1, good=0, goal=0, count=0)
 
         if self._read_left_foot_touch():
             touch_success = True
+            print(
+                f"  [台阶匹配检查] distance={distance:.4f} | "
+                f"success_thresh={self.success_dist_thresh:.4f}"
+            )
             if distance <= self.success_dist_thresh:
                 goal = 1
-                reward = self.success_reward
-                print(
-                    f"[STEP_OK] step={self.step} dist={distance:.4f} < {self.success_dist_thresh:.4f}, "
-                    f"reward={reward:.2f}"
-                )
+                self._log_constraint_trigger('target_check', 'grasped_right')
+                print(f"[STEP_OK] step={self.step} dist={distance:.4f} < {self.success_dist_thresh:.4f}")
             else:
-                reward = self.wrong_touch_penalty
-                print(
-                    f"[STEP_OFF_TARGET] step={self.step} dist={distance:.4f} >= {self.success_dist_thresh:.4f}, "
-                    f"reward={reward:.2f}"
-                )
+                self._log_constraint_trigger('target_check', 'grasped_wrong')
+                print(f"[STEP_OFF_TARGET] step={self.step} dist={distance:.4f} >= {self.success_dist_thresh:.4f}")
             done = 1
         else:
-            reward = self._compute_reward(distance=distance, done=done, goal=goal, collision=False, touch_success=False)
+            self._log_constraint_trigger('touch_result', 'close failed - no complete foot contact')
+
+        reward, center_error = self._compute_reward(
+            distance=distance,
+            foot_x=foot_x,
+            foot_y=foot_y,
+            done=done,
+            goal=goal,
+            collision=False,
+            touch_success=touch_success,
+        )
+
+        print(
+            f"  [台阶奖励] dist={distance:.4f} | center_error={center_error:.4f} | "
+            f"prev_dist={RobotRun._prev_distance} | prev_center_error={RobotRun._prev_center_error} | reward={reward:.4f}"
+        )
 
         RobotRun._prev_distance = distance if done == 0 else None
+        RobotRun._prev_center_error = center_error if done == 0 else None
         RobotRun._prev_foot_height = None if done == 1 else RobotRun._prev_foot_height
 
         return self._finish(reward=reward, done=done, good=good, goal=goal, count=count)

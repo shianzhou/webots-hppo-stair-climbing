@@ -122,6 +122,9 @@ def run_tai_stage(
     loss_d = 0.0
     loss_c = 0.0
     goal = 0
+    prev_exec_actions = [0.0, 0.0, 0.0]
+    prev_discrete_actions = [1.0, 1.0, 1.0]
+    left_step_history = []
 
     print("____________________")
 
@@ -139,13 +142,21 @@ def run_tai_stage(
         tai_continuous_log_prob = tai_dict['continuous_log_prob']
         tai_value = tai_dict['value']
 
-        action_leg_upper = float(tai_continuous_action[0])
-        action_leg_lower = float(tai_continuous_action[1])
-        action_leg_ankle = float(tai_continuous_action[2])
+        discrete_mask = [int(v) for v in tai_discrete_action]
+        raw_leg_upper = float(tai_continuous_action[0])
+        raw_leg_lower = float(tai_continuous_action[1])
+        raw_leg_ankle = float(tai_continuous_action[2])
+
+        action_leg_upper = raw_leg_upper if discrete_mask[0] == 1 else float(prev_exec_actions[0])
+        action_leg_lower = raw_leg_lower if discrete_mask[1] == 1 else float(prev_exec_actions[1])
+        action_leg_ankle = raw_leg_ankle if discrete_mask[2] == 1 else float(prev_exec_actions[2])
 
         print("第", steps + 1, "步")
-        print(f"【原始连续动作】LegUpper: {action_leg_upper:.4f}, LegLower: {action_leg_lower:.4f}, Ankle: {action_leg_ankle:.4f}")
-        print(f"【最终执行动作】LegUpper: {action_leg_upper:.4f}, LegLower: {action_leg_lower:.4f}, Ankle: {action_leg_ankle:.4f}")
+        print(f"【原始离散动作】{tai_discrete_action}")
+        print(f"【原始连续动作】{tai_continuous_action}")
+        print(f"【门控后执行动作】LegUpper: {action_leg_upper:.4f}, LegLower: {action_leg_lower:.4f}, Ankle: {action_leg_ankle:.4f}")
+        print(f"【门控说明】mask={discrete_mask} | raw=({raw_leg_upper:.4f}, {raw_leg_lower:.4f}, {raw_leg_ankle:.4f})")
+        print(f"【上一步执行动作】prev_exec={prev_exec_actions} | prev_discrete={prev_discrete_actions}")
 
         gps_values = validate_and_clean_data(env.print_gps())
         next_state, reward_env, done, good, goal, count = env.step2(
@@ -163,6 +174,10 @@ def run_tai_stage(
         )
 
         reward = float(reward_env)
+
+        left_step_history.append((action_leg_upper, action_leg_lower, action_leg_ankle))
+        prev_exec_actions = [action_leg_upper, action_leg_lower, action_leg_ankle]
+        prev_discrete_actions = [float(discrete_mask[0]), float(discrete_mask[1]), float(discrete_mask[2])]
 
         return_all += reward
         steps += 1
