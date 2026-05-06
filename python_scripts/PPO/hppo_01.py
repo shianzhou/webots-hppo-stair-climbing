@@ -147,24 +147,9 @@ class HPPO:
                 state=obs[1],
                 x_graph=x_graph
             )
-            # discrete_probs, value = self.policy(x=obs[0], state=obs[1], x_graph=x_graph)
-            # m = Bernoulli(discrete_probs)
-
-
-            # discrete_actions = m.sample()  # [num_servos]
-            # discrete_log_probs = m.log_prob(discrete_actions)  # [num_servos]
-            # action = discrete_actions.cpu().numpy()
-            # log_prob = discrete_log_probs.cpu().numpy()
 
             discrete_action = discrete_dist.sample()  # 采样离散动作
 
-            #
-            # # 重新计算裁剪后的对数概率
-
-            #
-            # # 2. 计算已采样动作的对数概率
-            # discrete_log_prob = discrete_dist.log_prob(discrete_action)
-            # # continuous_log_prob = continuous_dist.log_prob(continuous_action)
 
             if discrete_action.dim() > 1:
                 discrete_action = discrete_action.squeeze(0)  # 移除批次维度
@@ -202,15 +187,6 @@ class HPPO:
             }
             return action_dict
 
-    # def store_transition(self, state, discrete_action,continuous_action, reward, next_state, done, value, log_prob):
-    #     self.states.append(state)
-    #     self.discrete_actions.append(discrete_action)
-    #     self.continuous_actions.append(continuous_action)
-    #     self.rewards.append(reward)
-    #     self.next_states.append(next_state)
-    #     self.values.append(value)
-    #     self.log_probs.append(log_prob)
-    #     self.dones.append(done)
     def store_transition(self, state, discrete_action, continuous_action, reward, next_state, done, value,
                          discrete_log_prob, continuous_log_prob):
         self.states.append(state)

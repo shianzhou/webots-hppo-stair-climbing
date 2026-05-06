@@ -1,7 +1,7 @@
 import os
 
 from python_scripts.PPO.PPO_episoid_2_1 import PPO_tai_episoid
-from python_scripts.PPO.checkpoint_utils import (
+from python_scripts.PPO.preparation_tool.checkpoint_utils import (
     ensure_dir as _ensure_dir,
     load_catch_model,
     load_decision_model,
@@ -9,7 +9,7 @@ from python_scripts.PPO.checkpoint_utils import (
     next_log_file as _next_log_file,
 )
 from python_scripts.PPO.RobotRun0 import RobotRun0
-from python_scripts.PPO.training_manager import TrainingManager
+from python_scripts.PPO.preparation_tool.training_manager import TrainingManager
 from python_scripts.PPO.hppo import HPPO as d_hppo
 from python_scripts.PPO.hppo_01 import HPPO as hppo
 from python_scripts.PPO_Log_write import Log_write
@@ -17,42 +17,84 @@ from python_scripts.Project_config import path_list
 from python_scripts.Webots_interfaces import Environment
 
 
-def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
-    # ===== 训练管理器初始化（方案A核心） =====
+def init_training_and_logging(path_list, default_tai_episode=1, catch_save_interval=500):
+    """
+    Initialize training manager, agents, log writers, directories and return them as a dict.
+    """
     training_manager = TrainingManager()
-    
-    # ===== 智能体实例化（统一放置） =====
-    hppo_agent = hppo(num_servos=2, node_num=19, env_information=None)          # 抓取阶段智能体
-    tai_agent = hppo(num_servos=3, node_num=19, env_information=None)       # 抬腿阶段智能体（复用）
-    decision_hppo_agent = d_hppo(num_servos=1, node_num=19, env_information=None)  # 上层决策智能体
 
-    # ===== 日志写入器 =====
-    log_writer_catch = Log_write()  # 创建抓取日志写入器
-    log_writer_tai = Log_write()    # 创建抬腿日志写入器
-    log_writer_decision = Log_write()  # 创建决策日志写入器
+    # 智能体实例化（统一放置）
+    hppo_agent = hppo(num_servos=2, node_num=19, env_information=None)
+    tai_agent = hppo(num_servos=3, node_num=19, env_information=None)
+    decision_hppo_agent = d_hppo(num_servos=1, node_num=19, env_information=None)
 
-    # ===== 基础计数 =====
-    tai_episoid = 1
+    # 日志写入器
+    log_writer_catch = Log_write()
+    log_writer_tai = Log_write()
+    log_writer_decision = Log_write()
 
-    # ===== 模型保存目录（统一，使用配置的新路径） =====
+    tai_episoid = default_tai_episode
+
+    # 模型保存目录（统一，使用配置的新路径）
     catch_checkpoint_dir = path_list['model_path_catch_PPO_h']
     decision_checkpoint_dir = path_list['model_path_decision_PPO_h']
-    catch_save_interval = 500
+
     _ensure_dir(catch_checkpoint_dir)
     _ensure_dir(decision_checkpoint_dir)
 
-    # ===== 日志文件（自动递增编号） =====
-    # 确保日志目录存在
+    # 日志目录（确保存在）
     _ensure_dir(path_list['catch_log_path_PPO'])
     _ensure_dir(path_list['tai_log_path_PPO'])
     _ensure_dir(path_list['decision_log_path_PPO'])
-    
+
     log_file_latest_catch = _next_log_file(path_list['catch_log_path_PPO'], 'catch_log')
     log_file_latest_tai = _next_log_file(path_list['tai_log_path_PPO'], 'tai_log')
     log_file_latest_decision = _next_log_file(path_list['decision_log_path_PPO'], 'decision_log')
+
     print(f"将使用新的抓取日志目录: {log_file_latest_catch}")
     print(f"将使用新抬腿的日志目录: {log_file_latest_tai}")
     print(f"将使用新决策的日志目录: {log_file_latest_decision}")
+
+    return {
+        'training_manager': training_manager,
+        'hppo_agent': hppo_agent,
+        'tai_agent': tai_agent,
+        'decision_hppo_agent': decision_hppo_agent,
+        'log_writer_catch': log_writer_catch,
+        'log_writer_tai': log_writer_tai,
+        'log_writer_decision': log_writer_decision,
+        'tai_episoid': tai_episoid,
+        'catch_checkpoint_dir': catch_checkpoint_dir,
+        'decision_checkpoint_dir': decision_checkpoint_dir,
+        'catch_save_interval': catch_save_interval,
+        'log_file_latest_catch': log_file_latest_catch,
+        'log_file_latest_tai': log_file_latest_tai,
+        'log_file_latest_decision': log_file_latest_decision,
+    }
+
+
+def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
+    # 初始化训练管理与日志（已提取）
+    init = init_training_and_logging(path_list)
+
+    training_manager = init['training_manager']
+    hppo_agent = init['hppo_agent']
+    tai_agent = init['tai_agent']
+    decision_hppo_agent = init['decision_hppo_agent']
+
+    log_writer_catch = init['log_writer_catch']
+    log_writer_tai = init['log_writer_tai']
+    log_writer_decision = init['log_writer_decision']
+
+    tai_episoid = init['tai_episoid']
+
+    catch_checkpoint_dir = init['catch_checkpoint_dir']
+    decision_checkpoint_dir = init['decision_checkpoint_dir']
+    catch_save_interval = init['catch_save_interval']
+
+    log_file_latest_catch = init['log_file_latest_catch']
+    log_file_latest_tai = init['log_file_latest_tai']
+    log_file_latest_decision = init['log_file_latest_decision']
 
     # ===== 模型加载（函数化） =====
     episode_start = load_catch_model(model_path, hppo_agent, path_list['model_path_catch_PPO_h'])
@@ -72,7 +114,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
     # ===============================
     # 上层总训练循环（新增）
     # ===============================
-    MAX_TOTAL_EPISODE = 3000
+    MAX_TOTAL_EPISODE = 10000
 
     env = Environment()  # 仍然只有一个 env
     robot_run0 = RobotRun0(
