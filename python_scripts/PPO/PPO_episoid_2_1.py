@@ -5,6 +5,7 @@ import torch
 from python_scripts.Webots_interfaces import Environment
 from python_scripts.Project_config import gps_goal1,path_list
 from python_scripts.PPO.hppo_01 import HPPO as tai_hppo
+from python_scripts.PPO.log_code import TaiAgentLog
 #from python_scripts.PPO.utils.sensor_utils import wait_for_sensors_stable, reset_environment
 
 # 统一的模型保存目录（仅使用配置路径）
@@ -66,10 +67,6 @@ def PPO_tai_episoid(existing_env=None ,total_episode=0, episode=0, log_writer_ta
     # 获取观察和状态
     print("____________________")
    
-
-    # 记录回合数
-    log_writer_tai.add(episode_num=total_episode)
-    
     while True:
         obs_img, obs_tensor = env.get_img(steps, imgs)
         robot_state = env.get_robot_state()
@@ -133,11 +130,11 @@ def PPO_tai_episoid(existing_env=None ,total_episode=0, episode=0, log_writer_ta
         gate_activation["lower"] += discrete_lower
         gate_activation["ankle"] += discrete_ankle
         
-        # 分别添加动作、对数概率和状态价值到日志
-        log_writer_tai.add_action_tai(action_LegUpper, action_LegLower, action_Ankle)
-        log_writer_tai.add_log_prob_tai(log_prob_LegUpper, log_prob_LegLower, log_prob_Ankle)
-        value_scalar = tai_value if isinstance(tai_value, (int, float)) else tai_value.item()
-        log_writer_tai.add_value_tai(value_scalar, value_scalar, value_scalar)
+        # 分别添加动作、对数概率和状态价值到日志（新系统不需要这些细粒度记录）
+        # log_writer_tai.add_action_tai(action_LegUpper, action_LegLower, action_Ankle)
+        # log_writer_tai.add_log_prob_tai(log_prob_LegUpper, log_prob_LegLower, log_prob_Ankle)
+        # value_scalar = tai_value if isinstance(tai_value, (int, float)) else tai_value.item()
+        # log_writer_tai.add_value_tai(value_scalar, value_scalar, value_scalar)
 
         print("第", steps + 1, "步")
         print(f"【tai_agent门控控制】离散动作: [{discrete_upper}, {discrete_lower}, {discrete_ankle}]")
@@ -317,32 +314,27 @@ def PPO_tai_episoid(existing_env=None ,total_episode=0, episode=0, log_writer_ta
                     print(f"  全关闭次数: {gate_activation['all_off']} / {int(gate_activation['steps'])}")
                 print("=" * 60)
             
-            # 记录损失值
+            # 记录损失值和其他指标（使用新的add_episode方法）
             total_loss = loss_discrete + loss_continuous
-            log_writer_tai.add(loss=total_loss)
-            log_writer_tai.add(loss_discrete=loss_discrete)
-            log_writer_tai.add(loss_continuous=loss_continuous)
-            # ========== 记录结果 ==========
-            # return_all: 当前episode的累积奖励（所有步的reward之和）
-            # goal: 环境返回的目标达成标志（在RobotRun2.py中计算）
-            #   - goal=1: 脚部成功接触到梯子（touch传感器触发且距离较近）
-            #   - goal=0: 未达到目标或距离太远
-            log_writer_tai.add(return_all=return_all)
-            log_writer_tai.add(goal=goal)
-            if gate_activation["steps"] > 0:
-                log_writer_tai.add(
-                    gate_upper_ratio=gate_activation["upper"] / gate_activation["steps"]
-                )
-                log_writer_tai.add(
-                    gate_lower_ratio=gate_activation["lower"] / gate_activation["steps"]
-                )
-                log_writer_tai.add(
-                    gate_ankle_ratio=gate_activation["ankle"] / gate_activation["steps"]
-                )
-                log_writer_tai.add(
-                    gate_all_off_ratio=gate_activation["all_off"] / gate_activation["steps"]
-                )
-            gate_activation = {"upper": 0.0, "lower": 0.0, "ankle": 0.0, "all_off": 0, "steps": 0}
+            
+            # 计算tai_success标记（如果goal达成则为True）
+            tai_success = bool(goal == 1)
+            
+            # 使用新的日志系统记录episode
+            log_writer_tai.add_episode(
+                episode_num=episode,
+                total_episode=total_episode,
+                loss_discrete=loss_discrete,
+                loss_continuous=loss_continuous,
+                episode_reward=return_all,
+                episode_steps=steps,
+                tai_success=tai_success,
+                goal=goal,
+                gate_upper_ratio=gate_activation["upper"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+                gate_lower_ratio=gate_activation["lower"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+                gate_ankle_ratio=gate_activation["ankle"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+            )
+            log_writer_tai.save(log_file_latest_tai)
             
             # 如果回合结束，重置环境
         print("done:", done)
@@ -366,7 +358,5 @@ def PPO_tai_episoid(existing_env=None ,total_episode=0, episode=0, log_writer_ta
             #episode += 1
             obs, obs_tensor = env.get_img(steps, imgs)
             robot_state = env.get_robot_state()
-            
-            log_writer_tai.save_tai(log_file_latest_tai)
             break
         

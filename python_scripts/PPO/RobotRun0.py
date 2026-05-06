@@ -94,14 +94,6 @@ class RobotRun0:
             post_branch_catch_success=post_branch_catch_success,
         )
 
-        effective_catch_success = post_branch_catch_success if decision == 0 else pre_branch_catch_success
-
-        self.log_writer_decision.add(episode_num=total_episode)
-        self.log_writer_decision.add(decision=decision)
-        self.log_writer_decision.add(decision_reward=decision_reward)
-        self.log_writer_decision.add(catch_success=int(effective_catch_success))
-        self.log_writer_decision.add(decision_route=route)
-
         self.decision_agent.store_transition(
             state=decision_state,
             action=decision,
@@ -112,18 +104,26 @@ class RobotRun0:
             log_prob=decision_dict['discrete_log_prob'],
         )
 
-        self.log_writer_decision.add(decision_value=decision_dict['value'])
-
         self.training_manager.increment_decision()
         if self.training_manager.should_learn_decision():
             decision_loss = self.decision_agent.learn()
             print(f'【决策模型学习】{self.training_manager.get_status()} | decision_loss: {decision_loss:.6f}')
-            self.log_writer_decision.add(decision_loss=decision_loss)
         else:
             print(f'【决策模型累积经验】{self.training_manager.get_status()}')
             decision_loss = 0
 
-        self.log_writer_decision.save_catch(self.log_file_latest_decision)
+        # 使用新的log_code系统的add_cycle()方法记录决策日志
+        self.log_writer_decision.add_cycle(
+            total_episode=total_episode,
+            decision_action=decision,
+            loss_discrete=decision_loss,
+            loss_continuous=0.0,  # 决策层暂无连续损失
+            decision_reward=decision_reward,
+            route=route,
+            pre_catch_success=pre_branch_catch_success,
+            post_catch_success=post_branch_catch_success,
+        )
+        self.log_writer_decision.save(self.log_file_latest_decision)
 
         if total_episode % self.save_interval == 0:
             dec_path = os.path.join(self.decision_checkpoint_dir, f"decision_hppo_{total_episode}.ckpt")

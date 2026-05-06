@@ -12,7 +12,7 @@ from python_scripts.PPO.RobotRun0 import RobotRun0
 from python_scripts.PPO.preparation_tool.training_manager import TrainingManager
 from python_scripts.PPO.hppo import HPPO as d_hppo
 from python_scripts.PPO.hppo_01 import HPPO as hppo
-from python_scripts.PPO_Log_write import Log_write
+from python_scripts.PPO.log_code import CatchAgentLog, TaiAgentLog, DecisionAgentLog
 from python_scripts.Project_config import path_list
 from python_scripts.Webots_interfaces import Environment
 
@@ -28,10 +28,10 @@ def init_training_and_logging(path_list, default_tai_episode=1, catch_save_inter
     tai_agent = hppo(num_servos=3, node_num=19, env_information=None)
     decision_hppo_agent = d_hppo(num_servos=1, node_num=19, env_information=None)
 
-    # 日志写入器
-    log_writer_catch = Log_write()
-    log_writer_tai = Log_write()
-    log_writer_decision = Log_write()
+    # 日志写入器（使用新的log_code包）
+    log_writer_catch = CatchAgentLog(keep_records=False)
+    log_writer_tai = TaiAgentLog(keep_records=False)
+    log_writer_decision = DecisionAgentLog(keep_records=False)
 
     tai_episoid = default_tai_episode
 
@@ -147,8 +147,9 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
             env.wait(500)
             steps = 0
             done = 0
-            # 直接使用外层的episode_num，不用for循环
-            log_writer_catch.add(episode_num=episode_num)
+            episode_reward = 0  # 累计episode奖励
+            loss_d = 0.0  # 最后一次的离散损失
+            loss_c = 0.0  # 最后一次的连续损失
             print(f"<<<<<<<<<第{episode_num}周期")  # 打印当前周期
             
             print("____________________")  # 打印初始状态
@@ -169,6 +170,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
                 value = dict['value']
 
                 next_state, reward, done, catch_success = env.step(d_action, c_action, steps)
+                episode_reward += reward  # 累计奖励
 
                 next_obs_img, next_obs_tensor = env.get_img(steps)  # 获取下一个图像和图像张量
 
@@ -184,7 +186,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
                             continuous_log_prob=dict['continuous_log_prob']
                         )
                 
-                loss_d, loss_c = hppo_agent.learn()
+                loss_d, loss_c = hppo_agent.learn()  # 保存最后一次loss
 
                 obs_tensor = next_obs_tensor
                 robot_state = next_state
@@ -193,6 +195,18 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
                 print("已执行")
                 if done == 1 or steps >= max_steps_per_episode:
                     break
+
+            # 记录catch episode日志
+            log_writer_catch.add_episode(
+                episode_num=episode_num,
+                total_episode=total_episode,
+                loss_discrete=loss_d,
+                loss_continuous=loss_c,
+                episode_reward=episode_reward,
+                episode_steps=steps,
+                catch_success=catch_success
+            )
+            log_writer_catch.save(log_file_latest_catch)
 
             if done == 1 and total_episode % catch_save_interval == 0:
                 catch_path = os.path.join(catch_checkpoint_dir, f"catch_hppo_{total_episode}.ckpt")
