@@ -20,6 +20,19 @@ ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # 相对路径
 import torch
 from python_scripts.Project_config import gps_goal1
 
+
+def validate_and_clean_data(data, default_value=0.0):
+    """Validate sensor data and replace NaN/Inf values before PPO uses it."""
+    if isinstance(data, (list, tuple)):
+        return [validate_and_clean_data(x, default_value) for x in data]
+    if isinstance(data, np.ndarray):
+        return np.nan_to_num(data, nan=default_value, posinf=default_value, neginf=-default_value)
+    if isinstance(data, (int, float)):
+        if np.isnan(data) or np.isinf(data):
+            return default_value
+        return data
+    return data
+
 class RobotRun2:
     """
     控制机器人按照action行动的类，用于爬梯子阶段
@@ -287,3 +300,334 @@ class RobotRun2:
                 
         # 返回结果
         return self.next_state, reward, done, good, goal, count
+
+
+class TaiStageRunner:
+    """抬腿阶段封装：负责选动作、执行、奖励、经验、学习、保存和日志。"""
+
+    def __init__(
+        self,
+        tai_agent,
+        training_manager,
+        log_writer_tai,
+        log_file_latest_tai,
+        tai_checkpoint_dir,
+        max_steps=20,
+        save_interval=400,
+    ):
+        self.tai_agent = tai_agent
+        self.training_manager = training_manager
+        self.log_writer_tai = log_writer_tai
+        self.log_file_latest_tai = log_file_latest_tai
+        self.tai_checkpoint_dir = tai_checkpoint_dir
+        self.max_steps = max_steps
+        self.save_interval = save_interval
+
+    def _initial_last_actions(self, env):
+        robot_state_initial = env.get_robot_state()
+        return (
+            robot_state_initial[12] if len(robot_state_initial) > 12 else 0.0,
+            robot_state_initial[13] if len(robot_state_initial) > 13 else 0.0,
+            robot_state_initial[14] if len(robot_state_initial) > 14 else 0.0,
+        )
+
+    def _map_gate_actions(
+        self,
+        discrete_upper,
+        discrete_lower,
+        discrete_ankle,
+        action_leg_upper,
+        action_leg_lower,
+        action_ankle,
+        last_action_leg_upper,
+        last_action_leg_lower,
+        last_action_ankle,
+    ):
+        action_leg_upper_exec = last_action_leg_upper if discrete_upper == 0 else action_leg_upper
+        action_leg_lower_exec = last_action_leg_lower if discrete_lower == 0 else action_leg_lower
+        action_ankle_exec = last_action_ankle if discrete_ankle == 0 else action_ankle
+        return action_leg_upper_exec, action_leg_lower_exec, action_ankle_exec
+
+    def _compute_reward(
+        self,
+        tai_episode,
+        reward_env,
+        count,
+        gps_values,
+        prev_distance,
+        prev_foot_height,
+        action_leg_upper,
+        action_leg_lower,
+        action_ankle,
+        discrete_upper,
+        discrete_lower,
+        discrete_ankle,
+        gate_activation,
+    ):
+        reward = 0.0
+        if count == 1:
+            x1 = gps_goal1[0] - gps_values[4][1]
+            y1 = gps_goal1[1] - gps_values[4][2]
+            distance = math.sqrt(x1 * x1 + y1 * y1)
+            if prev_distance is not None:
+                reward += (prev_distance - distance) * 10.0
+            else:
+                reward -= distance
+            prev_distance = distance
+
+            is_position_correct = distance <= 0.06
+            if is_position_correct:
+                reward += 5
+
+            foot_height = float(gps_values[4][0])
+            if prev_foot_height is not None:
+                height_diff = foot_height - prev_foot_height
+                if tai_episode < 5:
+                    if height_diff > 0:
+                        reward += height_diff * 5.0
+                else:
+                    if is_position_correct and height_diff < 0:
+                        reward += -height_diff * 20.0
+                        print("位置正确，鼓励踩踏！")
+                    elif height_diff < 0:
+                        reward += -height_diff * 3.0
+                    else:
+                        reward -= height_diff * 5.0
+            prev_foot_height = foot_height
+            reward += float(reward_env)
+        else:
+            prev_distance = None
+            prev_foot_height = None
+            reward = float(reward_env)
+
+        reward -= 0.02 * (abs(action_leg_upper) + abs(action_leg_lower) + abs(action_ankle))
+
+        if discrete_upper == 0 and discrete_lower == 0 and discrete_ankle == 0:
+            gate_activation["all_off"] += 1
+            reward -= 1.0
+            print("警告：所有下半身离散动作都为0，给予惩罚-1.0")
+
+        return reward, prev_distance, prev_foot_height
+
+    def _save_model_if_needed(self, total_episode, tai_episode, done):
+        if tai_episode % self.save_interval != 0 or done != 1:
+            return
+
+        save_path = os.path.join(self.tai_checkpoint_dir, f"tai_agent_{total_episode}_{tai_episode}.ckpt")
+        print(f"保存模型到: {save_path}")
+        checkpoint = {
+            "episode": tai_episode,
+            "policy_tai": self.tai_agent.policy.state_dict(),
+            "optimizer_tai": self.tai_agent.optimizer.state_dict(),
+        }
+        torch.save(checkpoint, save_path)
+
+    def _learn_if_ready(self, tai_episode, return_all, goal, gate_activation):
+        if self.training_manager is not None:
+            self.training_manager.increment_tai()
+            if self.training_manager.should_learn_tai():
+                loss_discrete, loss_continuous = self.tai_agent.learn()
+                print("=" * 60)
+                print(f"【抬腿模型学习】{self.training_manager.get_status()}")
+            else:
+                print(f"【抬腿模型累积经验】{self.training_manager.get_status()}")
+                return 0, 0
+        else:
+            loss_discrete, loss_continuous = self.tai_agent.learn()
+            print("=" * 60)
+
+        print(f"【第 {tai_episode} 回合训练完成】")
+        print(f"  累积奖励 (return_all): {return_all:.4f}")
+        print(f"  目标达成 (goal): {goal}")
+        print(f"  离散损失 (loss_discrete): {loss_discrete:.6f}")
+        print(f"  连续损失 (loss_continuous): {loss_continuous:.6f}")
+        print(f"  总损失 (total loss): {loss_discrete + loss_continuous:.6f}")
+        self._print_gate_activation(gate_activation)
+        print("=" * 60)
+        return loss_discrete, loss_continuous
+
+    def _print_gate_activation(self, gate_activation):
+        if gate_activation["steps"] <= 0:
+            return
+
+        print("【门控激活率】")
+        print(f"  LegUpper 激活率: {gate_activation['upper'] / gate_activation['steps']:.2%}")
+        print(f"  LegLower 激活率: {gate_activation['lower'] / gate_activation['steps']:.2%}")
+        print(f"  Ankle 激活率: {gate_activation['ankle'] / gate_activation['steps']:.2%}")
+        print(f"  全关闭次数: {gate_activation['all_off']} / {int(gate_activation['steps'])}")
+
+    def _log_episode(self, tai_episode, total_episode, loss_discrete, loss_continuous, return_all, steps, goal, gate_activation):
+        tai_success = bool(goal == 1)
+        self.log_writer_tai.add_episode(
+            episode_num=tai_episode,
+            total_episode=total_episode,
+            loss_discrete=loss_discrete,
+            loss_continuous=loss_continuous,
+            episode_reward=return_all,
+            episode_steps=steps,
+            tai_success=tai_success,
+            goal=goal,
+            gate_upper_ratio=gate_activation["upper"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+            gate_lower_ratio=gate_activation["lower"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+            gate_ankle_ratio=gate_activation["ankle"] / gate_activation["steps"] if gate_activation["steps"] > 0 else 0,
+        )
+        self.log_writer_tai.save(self.log_file_latest_tai)
+
+    def _reset_after_episode(self, env):
+        print("抬腿回合结束，重置环境...")
+        env.darwin._set_left_leg_initpose()
+        env.darwin.robot_reset()
+        env.reset()
+        print("等待稳定...")
+        for _ in range(40):
+            env.robot.step(env.timestep)
+        print("等待一秒...")
+        env.wait(1000)
+
+    def run_episode(self, env, total_episode, tai_episode, catch_success):
+        if not catch_success:
+            print("未检测到抓取成功，跳过抬腿阶段。")
+            return False
+
+        print("开始抬腿！")
+        env.darwin.tai_leg_L1()
+        env.darwin.tai_leg_L2()
+
+        return_all = 0
+        prev_distance = None
+        prev_foot_height = None
+        goal = 0
+        done = 0
+        steps = 0
+        catch_flag = 0.0
+        gate_activation = {"upper": 0.0, "lower": 0.0, "ankle": 0.0, "all_off": 0, "steps": 0}
+        last_action_leg_upper, last_action_leg_lower, last_action_ankle = self._initial_last_actions(env)
+
+        print("____________________")
+
+        while True:
+            obs_img, obs_tensor = env.get_img(steps)
+            robot_state = validate_and_clean_data(env.get_robot_state())
+
+            tai_dict = self.tai_agent.choose_action(
+                episode_num=tai_episode,
+                obs=[obs_img, robot_state],
+                x_graph=robot_state,
+            )
+
+            tai_discrete_action = tai_dict['discrete_action']
+            tai_continuous_action = tai_dict['continuous_action']
+            tai_continuous_log_prob = tai_dict['continuous_log_prob']
+            tai_value = tai_dict['value']
+
+            action_leg_upper = float(tai_continuous_action[0])
+            action_leg_lower = float(tai_continuous_action[1])
+            action_ankle = float(tai_continuous_action[2])
+            discrete_upper = int(tai_discrete_action[0])
+            discrete_lower = int(tai_discrete_action[1])
+            discrete_ankle = int(tai_discrete_action[2])
+
+            action_leg_upper_exec, action_leg_lower_exec, action_ankle_exec = self._map_gate_actions(
+                discrete_upper,
+                discrete_lower,
+                discrete_ankle,
+                action_leg_upper,
+                action_leg_lower,
+                action_ankle,
+                last_action_leg_upper,
+                last_action_leg_lower,
+                last_action_ankle,
+            )
+            last_action_leg_upper = action_leg_upper_exec
+            last_action_leg_lower = action_leg_lower_exec
+            last_action_ankle = action_ankle_exec
+
+            gate_activation["steps"] += 1
+            gate_activation["upper"] += discrete_upper
+            gate_activation["lower"] += discrete_lower
+            gate_activation["ankle"] += discrete_ankle
+
+            print("第", steps + 1, "步")
+            print(f"【tai_agent门控控制】离散动作: [{discrete_upper}, {discrete_lower}, {discrete_ankle}]")
+            print(f"【原始连续动作】LegUpper: {action_leg_upper:.4f}, LegLower: {action_leg_lower:.4f}, Ankle: {action_ankle:.4f}")
+            print(f"【最终执行动作】LegUpper: {action_leg_upper_exec:.4f}, LegLower: {action_leg_lower_exec:.4f}, Ankle: {action_ankle_exec:.4f}")
+
+            gps_values = validate_and_clean_data(env.print_gps())
+            next_state, reward_env, done, good, goal, count = env.step2(
+                robot_state,
+                action_leg_upper_exec,
+                action_leg_lower_exec,
+                action_ankle_exec,
+                steps,
+                catch_flag,
+                gps_values[4],
+                gps_values[0],
+                gps_values[1],
+                gps_values[2],
+                gps_values[3],
+            )
+
+            reward, prev_distance, prev_foot_height = self._compute_reward(
+                tai_episode,
+                reward_env,
+                count,
+                gps_values,
+                prev_distance,
+                prev_foot_height,
+                action_leg_upper,
+                action_leg_lower,
+                action_ankle,
+                discrete_upper,
+                discrete_lower,
+                discrete_ankle,
+                gate_activation,
+            )
+            return_all += reward
+            steps += 1
+
+            next_obs_img, next_obs_tensor = env.get_img(steps)
+            should_store = not (done == 1 and steps <= 2 and good != 1 and reward == 0)
+            if should_store:
+                self.tai_agent.store_transition(
+                    state=[obs_img, robot_state, robot_state],
+                    discrete_action=tai_discrete_action,
+                    continuous_action=tai_continuous_action,
+                    reward=reward,
+                    next_state=[next_obs_img, robot_state, next_state],
+                    done=done,
+                    value=tai_value,
+                    discrete_log_prob=tai_dict['discrete_log_prob'],
+                    continuous_log_prob=tai_continuous_log_prob,
+                )
+                print(f"  已存储经验 reward={reward:.4f}")
+            else:
+                print(f"  跳过无效样本：done={done}, steps={steps}, good={good}")
+
+            obs_tensor = next_obs_tensor
+            robot_state = env.get_robot_state()
+
+            if steps >= self.max_steps:
+                done = 1
+
+            self._save_model_if_needed(total_episode, tai_episode, done)
+
+            if tai_episode > 0 and done == 1:
+                loss_discrete, loss_continuous = self._learn_if_ready(tai_episode, return_all, goal, gate_activation)
+                self._log_episode(
+                    tai_episode,
+                    total_episode,
+                    loss_discrete,
+                    loss_continuous,
+                    return_all,
+                    steps,
+                    goal,
+                    gate_activation,
+                )
+
+            print("done:", done)
+
+            if done == 1 or steps > self.max_steps:
+                self._reset_after_episode(env)
+                break
+
+        return True
