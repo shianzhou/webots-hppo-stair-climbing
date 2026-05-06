@@ -146,7 +146,7 @@ class RobotRun(Darwin):
             stair_score_1, stair_score_2, distance = -20.0, -20.0, 1.0
 
         # 老版本中的判据迁移：两路评分和达到阈值才视作目标台阶
-        is_target_stair = int((stair_score_1 + stair_score_2) >= 20.0)
+        is_target_stair = int((stair_score_1 + stair_score_2) >= 10)
         return stair_score_1, stair_score_2, distance, is_target_stair
 
     def _check_joint_limits(self):
@@ -161,9 +161,16 @@ class RobotRun(Darwin):
         """加速度和陀螺仪约束。"""
         acc = self.accelerometer.getValues()
         gyro = self.gyro.getValues()
+        
+        # 调试日志
+        acc_ok = all(Darwin_config.acc_low[i] < acc[i] < Darwin_config.acc_high[i] for i in range(3))
+        gyro_ok = all(Darwin_config.gyro_low[i] < gyro[i] < Darwin_config.gyro_high[i] for i in range(3))
+        print(f"  [IMU] acc={[f'{v:.1f}' for v in acc]} (ok={acc_ok}) | gyro={[f'{v:.1f}' for v in gyro]} (ok={gyro_ok})")
+        
         for i in range(3):
             if not (Darwin_config.acc_low[i] < acc[i] < Darwin_config.acc_high[i] and
                     Darwin_config.gyro_low[i] < gyro[i] < Darwin_config.gyro_high[i]):
+                print(f"    ⚠️ IMU 超出范围 [i={i}] acc[{i}]={acc[i]} (range {Darwin_config.acc_low[i]}-{Darwin_config.acc_high[i]}) | gyro[{i}]={gyro[i]} (range {Darwin_config.gyro_low[i]}-{Darwin_config.gyro_high[i]})")
                 return False
         return True
 
@@ -196,24 +203,80 @@ class RobotRun(Darwin):
 
     def _close_grasp_and_read_pair(self, wait_ms=2000):
         """闭合抓爪并读取老版本使用的两路触碰模板。"""
+        # 打印闭合前所有抓取相关传感器的原始值，便于定位为何读到0
+        grasp_names = ['grasp_L1', 'grasp_L1_1', 'grasp_L1_2', 'grasp_R1', 'grasp_R1_1', 'grasp_R1_2']
+        pre_vals = {name: (self.touch_sensors[name].getValue() if name in self.touch_sensors else None) for name in grasp_names}
+        print(f"  [闭合前传感器] {pre_vals}")
+
+        # 闭合抓爪
         self.motors[21].setPosition(-0.5)
         self.motors[20].setPosition(-0.5)
+
         timer = 0
+        # 等待一段时间让闭合动作执行（以 timestep 为单位累加）
         while self.robot.step(self.timestep) != -1:
             timer += self.timestep
             if timer >= wait_ms:
                 break
 
-        for j in range(len(self.touch)):
-            self.touch_value[j] = self.touch[j].getValue()
+        # 更稳健的读取：按左右两侧汇总所有相关抓取传感器，取最大值作为该侧的接触信号
+        left_keys = [k for k in self.touch_sensors.keys() if k.startswith('grasp_L')]
+        right_keys = [k for k in self.touch_sensors.keys() if k.startswith('grasp_R')]
 
+        # 轮询直到读数稳定或超时（短轮询，稳定两次即停）
+        elapsed = 0
+        prev_pair = None
+        stable_count = 0
+        left_max = 0.0
+        right_max = 0.0
+        while self.robot.step(self.timestep) != -1 and elapsed < wait_ms:
+            left_vals = [self.touch_sensors[k].getValue() for k in left_keys] if left_keys else [0.0]
+            right_vals = [self.touch_sensors[k].getValue() for k in right_keys] if right_keys else [0.0]
+            cur_left = max(left_vals) if left_vals else 0.0
+            cur_right = max(right_vals) if right_vals else 0.0
+            cur_pair = (cur_left, cur_right)
+            if prev_pair is not None and abs(cur_pair[0] - prev_pair[0]) < 1e-3 and abs(cur_pair[1] - prev_pair[1]) < 1e-3:
+                stable_count += 1
+                if stable_count >= 2:
+                    left_max, right_max = cur_pair
+                    break
+            else:
+                stable_count = 0
+            prev_pair = cur_pair
+            elapsed += self.timestep
+
+        # 如果循环结束仍未稳定，采用最后读数
+        if left_max == 0.0 and right_max == 0.0:
+            # 重新采样一次作为后备
+            left_vals = [self.touch_sensors[k].getValue() for k in left_keys] if left_keys else [0.0]
+            right_vals = [self.touch_sensors[k].getValue() for k in right_keys] if right_keys else [0.0]
+            left_max = max(left_vals) if left_vals else 0.0
+            right_max = max(right_vals) if right_vals else 0.0
+
+        post_vals = {name: (self.touch_sensors[name].getValue() if name in self.touch_sensors else None) for name in grasp_names}
+        print(f"  [闭合后传感器] left_max={left_max:.3f} | right_max={right_max:.3f} | all_grasp={post_vals}")
+
+        # 使用左右最大值作为两个判定通道
+        self.touch_value = [float(left_max), float(right_max)]
         success = int(np.array_equal(self.touch_value, Darwin_config.touch_T))
         failed = int(np.array_equal(self.touch_value, Darwin_config.touch_F))
+
+        if success == 0 and failed == 0:
+            any_touch = (left_max > 0.5) or (right_max > 0.5)
+            print(f"  [诊断] strict判定未命中: any_touch={any_touch} | touch_value={self.touch_value} | touch_T={Darwin_config.touch_T} | touch_F={Darwin_config.touch_F}")
+
+        print(f"  [传感器读取结果] touch_value={self.touch_value} | success={success} | failed={failed}")
         return success, failed
 
     def _check_collision_constraint(self):
         """碰撞约束：手臂与腿部触碰传感器不应触发。"""
-        return any(sensor.getValue() == 1.0 for sensor in self.touch_peng)
+        # 原逻辑：任一传感器 == 1.0 就算碰撞（太敏感）
+        # 改进：只有至少 2 个传感器触发才算真正碰撞
+        collision_count = sum(1 for sensor in self.touch_peng if sensor.getValue() == 1.0)
+        has_collision = collision_count >= 2
+        if collision_count > 0:
+            print(f"  [碰撞传感器] 触发数={collision_count}/6 (阈值>=2) | has_collision={has_collision}")
+        return has_collision
 
     def _refresh_next_state(self):
         """更新next_state，供训练器作为下一时刻状态。"""
@@ -296,31 +359,9 @@ class RobotRun(Darwin):
         stair_score_1, stair_score_2, distance, is_target_stair = self._compute_distance_metrics()
         self.return_flag_list.update({'stair_score_1': stair_score_1, 'stair_score_2': stair_score_2, 
                                       'is_target_stair': is_target_stair, 'distance': distance})
-        joints_ok = self._check_joint_limits()
-        imu_ok = self._check_imu_limits()
         
         # 打印step开始信息
         print(f"\n[Step {int(self.step)}] d_action={int(self.discrete_action[0])},{int(self.discrete_action[1])} | c_action={self.action_shouder:.3f},{self.action_arm:.3f} | distance={distance:.4f}")
-
-        # 约束1：关节角度限制
-        if not joints_ok:
-            self._log_constraint_trigger('joint_limits', 'future_state out of Darwin_config.limit')
-            self.return_flag_list.update({'reward': 0.0, 'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
-            self._refresh_next_state()
-            return self.next_state, \
-                   self.return_flag_list['reward'], \
-                   self.return_flag_list['done'], \
-                 self.return_flag_list['catch_success']
-
-        # 约束2：IMU传感器范围
-        if not imu_ok:
-            self._log_constraint_trigger('imu_limits', 'accelerometer/gyro out of threshold')
-            self.return_flag_list.update({'reward': 0.0, 'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
-            self._refresh_next_state()
-            return self.next_state, \
-                   self.return_flag_list['reward'], \
-                   self.return_flag_list['done'], \
-                 self.return_flag_list['catch_success']
 
         success = 0
         failed = 0
@@ -331,14 +372,43 @@ class RobotRun(Darwin):
             self._apply_upper_body_action()
             self._wait_action_settle(max_steps=100, tol=0.01)
 
+            # ========== 执行完毕，开始检查各种约束 ==========
+            
+            # 约束1：关节角度限制（检查执行后的 future_state）
+            joints_ok = self._check_joint_limits()
+            if not joints_ok:
+                self._log_constraint_trigger('joint_limits', 'future_state out of Darwin_config.limit')
+                self.return_flag_list.update({'reward': 0.0, 'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
+                self._refresh_next_state()
+                return self.next_state, \
+                       self.return_flag_list['reward'], \
+                       self.return_flag_list['done'], \
+                       self.return_flag_list['catch_success']
+
+            # 约束2：IMU传感器范围
+            imu_ok = self._check_imu_limits()
+            if not imu_ok:
+                self._log_constraint_trigger('imu_limits', 'accelerometer/gyro out of threshold')
+                self.return_flag_list.update({'reward': 0.0, 'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
+                self._refresh_next_state()
+                return self.next_state, \
+                       self.return_flag_list['reward'], \
+                       self.return_flag_list['done'], \
+                       self.return_flag_list['catch_success']
+
             # 约束3：碰撞约束
             collision = self._check_collision_constraint()
             if collision:
                 self._log_constraint_trigger('collision', 'arm/leg touch sensors are active')
                 self.return_flag_list.update({'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
+                self._refresh_next_state()
+                return self.next_state, \
+                       self.return_flag_list['reward'], \
+                       self.return_flag_list['done'], \
+                       self.return_flag_list['catch_success']
 
             # 约束4：抓爪触碰触发后闭合并判定成功/失败
-            elif self._has_any_grasp_touch():
+            if self._has_any_grasp_touch():
                 self._log_constraint_trigger('grasp_touch', 'grasp sensor touched, start closing')
                 # 已触碰，进入闭合验证阶段
                 self.catch_flag = 1.0
@@ -350,6 +420,7 @@ class RobotRun(Darwin):
                     self.catch_Success_flag = True
                     # 抓取动作执行后再判定是否命中目标台阶
                     stair_score_1, stair_score_2, distance, is_target_stair = self._compute_distance_metrics()
+                    print(f"  [台阶匹配检查] stair_score_1={stair_score_1:.2f} | stair_score_2={stair_score_2:.2f} | sum={stair_score_1+stair_score_2:.2f} | is_target_stair={is_target_stair}")
                     self.return_flag_list.update({'stair_score_1': stair_score_1, 'stair_score_2': stair_score_2, 
                                                   'is_target_stair': is_target_stair, 'distance': distance})
                     if is_target_stair == 1:
@@ -365,12 +436,17 @@ class RobotRun(Darwin):
                     self._log_constraint_trigger('grasp_result', 'close failed')
                     self.return_flag_list['catch_state'] = 'attempt_failed'
                     goal_flag = 0
+                else:
+                    # 既不成功也不失败（视为失败）
+                    self._log_constraint_trigger('grasp_result', 'close failed - no complete grasp')
+                    self.return_flag_list['catch_state'] = 'attempt_failed'
+                    goal_flag = 0
 
-            # 约束5：执行后跟踪偏差约束
+            # 约束5：执行后跟踪偏差约束（只在未触碰抓爪时检查）
             else:
-                tracking_ok = self._check_tracking_constraint(tol=0.02)
+                tracking_ok = self._check_tracking_constraint(tol=0.03)
                 if not tracking_ok:
-                    self._log_constraint_trigger('tracking_error', 'joint tracking deviation > 0.005')
+                    self._log_constraint_trigger('tracking_error', 'joint tracking deviation > 0.03')
                     self.return_flag_list.update({'done': 1, 'catch_success': False, 'catch_state': 'terminated_by_constraint'})
                 # 如果都未触碰且约束通过，保留 catch_state='continue_search'
 
@@ -381,6 +457,7 @@ class RobotRun(Darwin):
             self.return_flag_list.update({'done': 1})
             # 同样在闭合动作后重新判断台阶匹配
             stair_score_1, stair_score_2, distance, is_target_stair = self._compute_distance_metrics()
+            print(f"  [台阶匹配检查] stair_score_1={stair_score_1:.2f} | stair_score_2={stair_score_2:.2f} | sum={stair_score_1+stair_score_2:.2f} | is_target_stair={is_target_stair}")
             self.return_flag_list.update({'stair_score_1': stair_score_1, 'stair_score_2': stair_score_2, 
                                           'is_target_stair': is_target_stair, 'distance': distance})
             if success == 1 and is_target_stair == 1:
@@ -391,7 +468,8 @@ class RobotRun(Darwin):
             elif success == 1:
                 self._log_constraint_trigger('target_check', 'grasped_wrong')
                 self.return_flag_list['catch_state'] = 'grasped_wrong'
-            elif failed == 1:
+            else:
+                # failed == 1 或既不成功也不失败（视为失败）
                 self._log_constraint_trigger('grasp_result', 'close failed')
                 self.return_flag_list['catch_state'] = 'attempt_failed'
 
@@ -407,8 +485,8 @@ class RobotRun(Darwin):
             failed=failed,
             goal=goal_flag,
             collision=collision,
-            imu_ok=imu_ok,
-            joints_ok=joints_ok
+            imu_ok=imu_ok if float(self.catch_flag) == 0.0 else True,
+            joints_ok=joints_ok if float(self.catch_flag) == 0.0 else True
         )
 
         # 更新跨step的距离记忆，用于下一步距离变化奖励
@@ -425,5 +503,5 @@ class RobotRun(Darwin):
         return self.next_state, \
                self.return_flag_list['reward'], \
                self.return_flag_list['done'], \
-             self.return_flag_list['catch_success']
+               self.return_flag_list['catch_success']
     

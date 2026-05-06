@@ -130,7 +130,6 @@ def run_tai_stage(
         robot_state = validate_and_clean_data(env.get_robot_state())
 
         tai_dict = tai_agent.choose_action(
-            episode_num=tai_episoid,
             obs=[obs_img, robot_state],
             x_graph=robot_state,
         )
@@ -332,7 +331,7 @@ def run_catch_stage(
     return catch_success
 
 
-def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
+def PPO_episoid_1(model_path=None, max_steps_per_episode=20):
     # 初始化训练管理与日志（已提取）
     init = init_training_and_logging(path_list)
 
@@ -356,18 +355,16 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
     log_file_latest_tai = init['log_file_latest_tai']
     log_file_latest_decision = init['log_file_latest_decision']
 
-    # ===== 模型加载（函数化） =====
-    episode_start = load_catch_model(model_path, hppo_agent, path_list['model_path_catch_PPO_h'])
+    # ===== 模型加载（权重可续，轮次不续） =====
+    load_catch_model(model_path, hppo_agent, path_list['model_path_catch_PPO_h'])
+    load_tai_model(tai_agent, path_list['model_path_tai_PPO_h'], default_episode=tai_episoid)
+    load_decision_model(decision_hppo_agent, path_list.get('model_path_decision_PPO_h'))
 
-    tai_episoid = load_tai_model(tai_agent, path_list['model_path_tai_PPO_h'], default_episode=tai_episoid)
-
-    decision_episode = load_decision_model(decision_hppo_agent, path_list.get('model_path_decision_PPO_h'))
-
-    # ===== 索引与计数（集中管理） =====
-    episode_num = episode_start           # 抓取阶段起始轮次
-    # 决策层起始轮次（从决策模型文件名恢复，若不存在则为0）
-    decision_episode = decision_episode if 'decision_episode' in locals() else 0
-    total_episode = decision_episode      # 总轮次计数
+    # ===== 索引与计数（每次重新训练都从 0/1 重新开始） =====
+    episode_num = 0
+    decision_episode = 0
+    total_episode = 0
+    tai_episoid = 1
     success_catch = 0                     # 抓取成功次数
     catch_success = False                 # 跨episode标记：上一轮是否抓取成功
 
@@ -377,6 +374,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
     MAX_TOTAL_EPISODE = 10000
 
     env = Environment()  # 仍然只有一个 env
+    env.reset()
     robot_run0 = RobotRun0(
         decision_agent=decision_hppo_agent,
         training_manager=training_manager,
@@ -384,6 +382,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
         log_file_latest_decision=log_file_latest_decision,
         decision_checkpoint_dir=decision_checkpoint_dir,
     )
+
     while total_episode < MAX_TOTAL_EPISODE:
 
         print(f"\n==============================")
@@ -398,7 +397,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=5):
         pre_branch_catch_success = catch_success
         route_info = robot_run0.judge_route(decision=decision, catch_success=pre_branch_catch_success)
         route = route_info['route']
-
+   
         if route == 'catch':
             catch_success = run_catch_stage(
                 env=env,
