@@ -1,12 +1,15 @@
 """RobotRun2 controller for the tai/stepping stage."""
 import math
-from python_scripts.Webots_interfaces import Darwin
-from python_scripts.Project_config import Darwin_config
+
 from python_scripts.Project_config import gps_goal1
+from python_scripts.Webots_interfaces import Darwin
 
 
-class RobotRun2(Darwin):
+class RobotRun(Darwin):
     """Execute one lower-body stepping action and return environment feedback."""
+
+    _prev_distance = None
+    _prev_foot_height = None
 
     motor_names = (
         'ShoulderR', 'ShoulderL', 'ArmUpperR', 'ArmUpperL',
@@ -42,8 +45,7 @@ class RobotRun2(Darwin):
         gps3,
         gps4,
     ):
-        self.robot = robot
-        self.timestep = 32
+        super().__init__(robot)
         self.step = step
         self.goal = gps_goal1
         self.robot_state = state
@@ -58,17 +60,28 @@ class RobotRun2(Darwin):
         self.action_leg_lower = float(action_leg_lower)
         self.action_ankle = float(action_ankle)
 
+        self.leg_upper_delta = 1.09 * self.action_leg_upper + 0.59
+        self.leg_lower_delta = 1.14 * self.action_leg_lower - 1.11
+        self.ankle_delta = 1.305 * self.action_ankle - 0.085
+
         self.success_dist_thresh = 0.04
-        self.miss_penalty_base = 4.0
-        self.miss_penalty_scale = 12.0
+        self.distance_reward_scale = 15.0
+        self.proximity_reward_scale = 5.0
+        self.action_penalty_scale = 0.02
+        self.collision_penalty = -8.0
+        self.success_reward = 50.0
+        self.wrong_touch_penalty = -2.0
+        self.failed_touch_penalty = -5.0
+        self.notouch_penalty = -10.0
+
         self.action_settle_timeout = 100
         self.action_settle_tolerance = 0.01
 
         self.motors = []
         self.motors_sensors = []
         self.touch_value = [0.0, 0.0, 0.0]
-        self.next_state = [0.0 for _ in range(20)]
         self.future_state = [value for value in self.robot_state]
+        self.next_state = [0.0 for _ in range(20)]
         self.next = self._compute_targets()
 
         self._init_devices()
@@ -105,9 +118,9 @@ class RobotRun2(Darwin):
 
     def _compute_targets(self):
         targets = [
-            self.robot_state[11] + self.action_leg_upper,
-            self.robot_state[13] + self.action_leg_lower,
-            self.robot_state[15] + self.action_ankle,
+            self.robot_state[11] + self.leg_upper_delta,
+            self.robot_state[13] + self.leg_lower_delta,
+            self.robot_state[15] + self.ankle_delta,
         ]
         self.future_state[11] = targets[0]
         self.future_state[13] = targets[1]
@@ -122,21 +135,30 @@ class RobotRun2(Darwin):
 
     def _apply_joint_limits(self):
         clamped_targets = []
-        for target_idx, joint_idx in enumerate(self.leg_joint_indices):
+        for joint_idx in self.leg_joint_indices:
             raw_value = self.future_state[joint_idx]
             clamped_value = self._clamp_joint(joint_idx, raw_value)
             self.future_state[joint_idx] = clamped_value
             clamped_targets.append(clamped_value)
             if raw_value != clamped_value:
-                print(f"[CLAMP] step={self.step} {joint_idx}:{raw_value:.3f}->{clamped_value:.3f}")
+                print(f"[CLAMP] step={self.step} joint={joint_idx} {raw_value:.3f}->{clamped_value:.3f}")
         return clamped_targets
 
-    def _check_imu(self):
+    def _check_joint_limits(self):
+        for joint_idx in self.leg_joint_indices:
+            low, high = self.limits[joint_idx]
+            if not (low <= self.future_state[joint_idx] <= high):
+                return False
+        return True
+
+    def _check_imu_limits(self):
         acc = self.accelerometer.getValues()
         gyro = self.gyro.getValues()
         for i in range(3):
-            if not (self.acc_low[i] < acc[i] < self.acc_high[i] and self.gyro_low[i] < gyro[i] < self.gyro_high[i]):
-                print("传感器数据异常，返回零奖励并结束回合")
+            if not (
+                self.acc_low[i] < acc[i] < self.acc_high[i]
+                and self.gyro_low[i] < gyro[i] < self.gyro_high[i]
+            ):
                 return False
         return True
 
@@ -171,8 +193,11 @@ class RobotRun2(Darwin):
     def _has_collision(self):
         return any(sensor.getValue() > 0.0 for sensor in self.touch_peng)
 
+    def _has_foot_contact(self):
+        return any(sensor.getValue() > 0.0 for sensor in self.touch)
+
     def _read_left_foot_touch(self, wait_ms=2000):
-        if not any(sensor.getValue() > 0.0 for sensor in self.touch):
+        if not self._has_foot_contact():
             return False
 
         print("___________")
@@ -189,23 +214,28 @@ class RobotRun2(Darwin):
             self.touch_value[i] = sensor.getValue()
         return any(value > 0.0 for value in self.touch_value)
 
-    def _compute_step_touch_reward(self, distance):
-        if distance < self.success_dist_thresh:
-            closeness_ratio = max(0.0, (self.success_dist_thresh - distance) / self.success_dist_thresh)
-            reward = 50.0 + 80.0 * closeness_ratio
-            print(
-                f"[STEP_OK] step={self.step} dist={distance:.4f} < {self.success_dist_thresh:.4f}, "
-                f"closeness={closeness_ratio:.3f}, reward={reward:.2f}"
-            )
-            return reward, 1
+    def _compute_reward(self, distance, done, goal, collision, touch_success):
+        if RobotRun._prev_distance is not None:
+            reward = (RobotRun._prev_distance - distance) * self.distance_reward_scale
+        else:
+            reward = -distance
 
-        miss_ratio = min(1.0, max(0.0, (distance - self.success_dist_thresh) / self.success_dist_thresh))
-        miss_penalty = self.miss_penalty_base + self.miss_penalty_scale * miss_ratio
-        print(
-            f"[STEP_OFF_TARGET] step={self.step} dist={distance:.4f} >= {self.success_dist_thresh:.4f}, "
-            f"miss_ratio={miss_ratio:.3f}, penalty={miss_penalty:.2f}"
+        reward += max(0.0, (0.5 - distance) * self.proximity_reward_scale)
+        reward -= self.action_penalty_scale * (
+            abs(self.action_leg_upper) + abs(self.action_leg_lower) + abs(self.action_ankle)
         )
-        return -miss_penalty, 0
+        reward -= 0.05 * float(self.step)
+
+        if collision:
+            reward += self.collision_penalty
+
+        if done == 1:
+            if touch_success:
+                reward += self.success_reward if goal == 1 else self.wrong_touch_penalty
+            else:
+                reward += self.notouch_penalty
+
+        return reward
 
     def _refresh_next_state(self):
         for i in range(min(20, len(self.motors_sensors))):
@@ -218,10 +248,21 @@ class RobotRun2(Darwin):
     def run(self):
         self.robot.step(self.timestep)
 
-        target = self._apply_joint_limits()
-        if not self._check_imu():
+        if int(self.step) <= 0:
+            RobotRun._prev_distance = None
+            RobotRun._prev_foot_height = None
+
+        if not self._check_joint_limits():
+            print("关节角度越界，结束回合")
+            self._refresh_next_state()
             return self._finish(reward=0.0, done=1, good=0, goal=0, count=0)
 
+        if not self._check_imu_limits():
+            print("传感器数据异常，结束回合")
+            self._refresh_next_state()
+            return self._finish(reward=0.0, done=1, good=0, goal=0, count=0)
+
+        target = self._apply_joint_limits()
         self._set_leg_targets(target)
         reached, used_frames = self._wait_leg_target_reached(target)
         print(
@@ -229,18 +270,43 @@ class RobotRun2(Darwin):
             f"frames={used_frames}/{self.action_settle_timeout} tol={self.action_settle_tolerance:.3f}"
         )
 
-        total_distance = self._read_step_distance_after_action()
-        reward = -total_distance
+        distance = self._read_step_distance_after_action()
+        goal = 0
         done = 0
         good = 1
-        goal = 0
         count = 1
+        touch_success = False
 
         if self._has_collision():
-            return self._finish(reward=-10.0, done=0, good=1, goal=0, count=0)
+            print("发生碰撞，结束回合")
+            RobotRun._prev_distance = None
+            RobotRun._prev_foot_height = None
+            return self._finish(reward=self.collision_penalty, done=1, good=0, goal=0, count=0)
 
         if self._read_left_foot_touch():
-            reward, goal = self._compute_step_touch_reward(total_distance)
-            return self._finish(reward=reward, done=1, good=1, goal=goal, count=1)
+            touch_success = True
+            if distance <= self.success_dist_thresh:
+                goal = 1
+                reward = self.success_reward
+                print(
+                    f"[STEP_OK] step={self.step} dist={distance:.4f} < {self.success_dist_thresh:.4f}, "
+                    f"reward={reward:.2f}"
+                )
+            else:
+                reward = self.wrong_touch_penalty
+                print(
+                    f"[STEP_OFF_TARGET] step={self.step} dist={distance:.4f} >= {self.success_dist_thresh:.4f}, "
+                    f"reward={reward:.2f}"
+                )
+            done = 1
+        else:
+            reward = self._compute_reward(distance=distance, done=done, goal=goal, collision=False, touch_success=False)
+
+        RobotRun._prev_distance = distance if done == 0 else None
+        RobotRun._prev_foot_height = None if done == 1 else RobotRun._prev_foot_height
 
         return self._finish(reward=reward, done=done, good=good, goal=goal, count=count)
+
+
+# 兼容旧调用，避免外部仍以RobotRun2引用时报错
+RobotRun2 = RobotRun
