@@ -1,0 +1,26 @@
+:root {
+  --md-primary-fg-color: #2f4f8f;
+  --md-accent-fg-color: #00897b;
+}
+
+.md-typeset {
+  font-size: 0.76rem;
+  line-height: 1.72;
+}
+
+.md-typeset h1,
+.md-typeset h2 {
+  font-weight: 650;
+}
+
+.md-typeset code {
+  border-radius: 4px;
+}
+
+.md-header__title {
+  font-weight: 650;
+}
+
+.md-nav__title {
+  font-weight: 650;
+}

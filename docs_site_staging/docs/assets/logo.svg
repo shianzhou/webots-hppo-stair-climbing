@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="webots-hppo-stair-climbing logo">
+  <rect width="64" height="64" rx="10" fill="#2f4f8f"/>
+  <path d="M13 46h10v-8h10v-8h10v-8h8" fill="none" stroke="#ffffff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="22" cy="20" r="5" fill="#00bfa5"/>
+  <path d="M30 27l-5 8 7 5 5-7" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

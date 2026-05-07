@@ -1,0 +1,27 @@
+# Obsidian source vault/folder. Keep this path as your private note source.
+source_root: "D:/obsidian/计划与随笔/2026年/强化学习"
+
+# The generated public copy inside docs/. Removing an item from the list or
+# setting enabled: false removes it from the published site on the next sync.
+target_root: "docs/notes"
+
+entries:
+  - source: "项目重构"
+    dest: "project"
+    enabled: true
+
+  - source: "单智能体"
+    dest: "algorithms/single-agent"
+    enabled: true
+
+  - source: "修改日志.md"
+    dest: "logs/修改日志.md"
+    enabled: true
+
+  - source: "关于测试代码.md"
+    dest: "experiments/关于测试代码.md"
+    enabled: false
+
+  - source: "prompt"
+    dest: "drafts/prompt"
+    enabled: false

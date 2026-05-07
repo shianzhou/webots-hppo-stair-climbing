@@ -1,0 +1,132 @@
+site_name: webots-hppo-stair-climbing
+site_description: Webots humanoid stair-climbing reinforcement learning notes and research docs.
+site_author: SiYou
+repo_name: webots-hppo-stair-climbing
+repo_url: https://github.com/YOUR_GITHUB_USERNAME/webots-hppo-stair-climbing
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+use_directory_urls: true
+
+theme:
+  name: material
+  language: zh
+  custom_dir: overrides
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  icon:
+    repo: fontawesome/brands/github
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: 切换到深色模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: 切换到浅色模式
+  font:
+    text: Noto Sans Simplified Chinese
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search:
+      lang:
+        - zh
+        - en
+  - roamlinks
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Overview: getting-started/index.md
+      - Local Preview: getting-started/local-preview.md
+      - Publishing Workflow: getting-started/publishing-workflow.md
+  - RL Foundations:
+      - Overview: foundations/index.md
+  - Algorithms:
+      - Overview: algorithms/index.md
+      - Single Agent HPPO: notes/algorithms/single-agent/单HPPO训练流程.md
+      - Network Settings: notes/algorithms/single-agent/关于网络设置.md
+      - Model Saving: notes/algorithms/single-agent/关于模型保存.md
+  - Webots HPPO Project:
+      - Overview: notes/project/总体文件概览.md
+      - Webots Interface: notes/project/Webots_interface.py.md
+      - State Inputs: notes/project/关于网络/状态输入.md
+  - Training Pipeline:
+      - PPO Episode 1: notes/project/训练流程/PPO_episoid_1训练流程说明书.md
+      - Train Manager: notes/project/训练流程/train manager在干什么.md
+  - RobotRun Layers:
+      - Overview: notes/project/关于robotRUN/总体说明.md
+      - Decision Layer:
+          - Flow: notes/project/关于robotRUN/RobotRun0_决策层/01_总流程与动作逻辑.md
+          - Functions: notes/project/关于robotRUN/RobotRun0_决策层/02_函数说明.md
+      - Catch Layer:
+          - Flow: notes/project/关于robotRUN/RobotRun1_抓取层/01_总流程与动作逻辑.md
+          - Functions: notes/project/关于robotRUN/RobotRun1_抓取层/02_函数说明.md
+      - Step Layer:
+          - Flow: notes/project/关于robotRUN/RobotRun2_踩踏层/01_总流程与动作逻辑.md
+          - Functions: notes/project/关于robotRUN/RobotRun2_踩踏层/02_函数说明.md
+  - Experiments:
+      - Overview: experiments/index.md
+      - Training Results: experiments/training-results.md
+  - Logs:
+      - Overview: logs/index.md
+      - Changelog: notes/logs/修改日志.md
+  - API Reference:
+      - Overview: api/index.md
+  - Changelog: changelog.md
