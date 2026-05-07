@@ -8,48 +8,72 @@ target_root: "docs/notes"
 entries:
   - source: "项目重构/总体文件概览.md"
     dest: "project/总体文件概览.md"
+    title: "总体文件概览"
+    nav: "项目代码说明"
     enabled: true
 
   - source: "项目重构/Webots_interface.py.md"
     dest: "project/Webots_interface.py.md"
+    title: "Webots 接口"
+    nav: "项目代码说明"
     enabled: true
 
   - source: "项目重构/关于网络/状态输入.md"
     dest: "project/关于网络/状态输入.md"
+    title: "状态输入"
+    nav: "项目代码说明"
     enabled: true
 
   - source: "项目重构/训练流程/PPO_episoid_1训练流程说明书.md"
     dest: "project/训练流程/PPO_episoid_1训练流程说明书.md"
+    title: "PPO_episoid_1 训练流程"
+    nav: "训练流程"
     enabled: true
 
   - source: "项目重构/训练流程/train manager在干什么.md"
     dest: "project/训练流程/train manager在干什么.md"
+    title: "Train Manager"
+    nav: "训练流程"
     enabled: true
 
   - source: "项目重构/关于robotRUN/总体说明.md"
     dest: "project/关于robotRUN/总体说明.md"
+    title: "RobotRun 总体说明"
+    nav: "RobotRun 分层"
     enabled: true
 
   - source: "项目重构/关于robotRUN/RobotRun0_决策层"
     dest: "project/关于robotRUN/RobotRun0_决策层"
+    title: "RobotRun0 决策层"
+    nav: "RobotRun 分层"
     enabled: true
 
   - source: "项目重构/关于robotRUN/RobotRun1_抓取层"
     dest: "project/关于robotRUN/RobotRun1_抓取层"
+    title: "RobotRun1 抓取层"
+    nav: "RobotRun 分层"
     enabled: true
 
   - source: "项目重构/关于robotRUN/RobotRun2_踩踏层"
     dest: "project/关于robotRUN/RobotRun2_踩踏层"
+    title: "RobotRun2 踩踏层"
+    nav: "RobotRun 分层"
     enabled: true
 
   - source: "项目重构/关于日志的方法.md"
     dest: "project/关于日志的方法.md"
+    title: "日志方法"
+    nav: "项目代码说明"
     enabled: true
 
   - source: "单智能体"
     dest: "algorithms/single-agent"
+    title: "单智能体旧笔记"
+    nav: "草稿"
     enabled: false
 
   - source: "修改日志.md"
     dest: "logs/修改日志.md"
+    title: "修改日志"
+    nav: "日志"
     enabled: false
