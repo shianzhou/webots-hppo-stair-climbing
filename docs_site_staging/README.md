@@ -2,9 +2,11 @@
 
 MkDocs + Material documentation site for Webots HPPO stair-climbing project code notes.
 
-[打开项目代码说明网站](site/index.html)
+[打开项目代码说明网站](https://shianzhou.github.io/webots-hppo-stair-climbing/)
 
 [文档首页源码](docs/index.md)
+
+`site/` is a local build output and is intentionally ignored by Git. GitHub Pages is published by the root workflow `.github/workflows/deploy.yml`.
 
 ## Local preview
 
