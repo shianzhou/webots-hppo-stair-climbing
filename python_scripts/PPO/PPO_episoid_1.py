@@ -27,7 +27,13 @@ def init_training_and_logging(path_list, default_tai_episode=1, catch_save_inter
     # 智能体实例化（统一放置）
     hppo_agent = hppo(num_servos=2, node_num=19, env_information=None)
     tai_agent = hppo(num_servos=3, node_num=19, env_information=None)
-    decision_hppo_agent = d_hppo(num_servos=1, node_num=19, env_information=None)
+    decision_hppo_agent = d_hppo(
+        num_servos=1,
+        node_num=19,
+        env_information=None,
+        state_dim=6,
+        use_image_input=False,
+    )
 
     # 日志写入器（使用新的log_code包）
     log_writer_catch = CatchAgentLog(keep_records=False)
@@ -88,6 +94,23 @@ def validate_and_clean_data(data, default_value=0.0):
             return default_value
         return data
     return data
+
+
+def _get_hand_pressure_state(env, feature_dim=6):
+    """Read hand touch sensors as the upper decision state's fixed 6D input."""
+    pressure_values = np.array([
+        float(env.darwin.get_touch_sensor_value('grasp_L1')),
+        float(env.darwin.get_touch_sensor_value('grasp_L1_1')),
+        float(env.darwin.get_touch_sensor_value('grasp_L1_2')),
+        float(env.darwin.get_touch_sensor_value('grasp_R1')),
+        float(env.darwin.get_touch_sensor_value('grasp_R1_1')),
+        float(env.darwin.get_touch_sensor_value('grasp_R1_2')),
+    ], dtype=np.float32)
+
+    state = np.zeros(feature_dim, dtype=np.float32)
+    state[:len(pressure_values)] = pressure_values
+    pressure_detected = bool(np.any(pressure_values > 0.0))
+    return state, pressure_values, pressure_detected
 
 
 def run_tai_stage(
@@ -405,10 +428,12 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=20):
         print(f"==============================")
 
         # ---------- 上层决策 ----------
-        d_steps = 0
-        d_obs_img, d_obs_tensor = env.get_img(d_steps)
-        d_robot_state = env.get_robot_state()
-        decision_dict, decision, decision_state = robot_run0.choose_action(d_obs_tensor, d_robot_state)
+        d_pressure_state, d_pressure_values, pressure_detected = _get_hand_pressure_state(env)
+        print(f"hand_pressure values: {d_pressure_values.tolist()}, detected={pressure_detected}")
+        decision_dict, decision, decision_state = robot_run0.choose_action(
+            d_pressure_state,
+            pressure_detected=pressure_detected,
+        )
         pre_branch_catch_success = catch_success
         route_info = robot_run0.judge_route(decision=decision, catch_success=pre_branch_catch_success)
         route = route_info['route']

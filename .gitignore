@@ -16,6 +16,9 @@ log/
 #picture
 *.png
 
+# docs
+python_scripts/PPO/docs/
+
 #path
 python_scripts/PPO/checkpoint_h/
 libraries/

@@ -151,3 +151,24 @@ def load_decision_model(decision_agent, dec_dir: Optional[str]) -> int:
         except Exception as exc:
             print(f"决策模型加载失败: {exc}")
     return 0
+
+
+def load_decision_model(decision_agent, dec_dir: Optional[str]) -> int:
+    if not dec_dir:
+        return 0
+    latest_dec, dec_episode = latest_decision_ckpt(dec_dir)
+    if not latest_dec:
+        return 0
+
+    try:
+        ckpt = torch.load(latest_dec)
+        if isinstance(ckpt, dict) and "policy" in ckpt:
+            decision_agent.policy.load_state_dict(ckpt["policy"])
+            if "optimizer" in ckpt and decision_agent.optimizer:
+                decision_agent.optimizer.load_state_dict(ckpt["optimizer"])
+            print(f"Decision model loaded: {latest_dec}")
+        return dec_episode
+    except Exception as exc:
+        print(f"Decision model load skipped: {exc}")
+        print("Decision checkpoint is incompatible with the current decision input; training from scratch.")
+        return 0
