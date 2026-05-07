@@ -32,20 +32,8 @@ def init_training_and_logging(path_list, default_tai_episode=1, catch_save_inter
     training_manager = TrainingManager()
 
     # 智能体实例化（统一放置）
-    hppo_agent = hppo(
-        num_servos=2,
-        node_num=19,
-        env_information=None,
-        state_dim=CATCH_STATE_DIM,
-        use_image_input=True,
-    )
-    tai_agent = hppo(
-        num_servos=3,
-        node_num=19,
-        env_information=None,
-        state_dim=TAI_STATE_DIM,
-        use_image_input=False,
-    )
+    hppo_agent = hppo(num_servos=2, node_num=19, env_information=None, state_dim=CATCH_STATE_DIM)
+    tai_agent = hppo(num_servos=3, node_num=19, env_information=None, state_dim=TAI_STATE_DIM)
     decision_hppo_agent = d_hppo(
         num_servos=1,
         node_num=19,
@@ -142,6 +130,7 @@ def run_tai_stage(
     print("____________________")
 
     while True:
+        obs_img, obs_tensor = env.get_img(steps)
         robot_state = validate_and_clean_data(env.get_robot_state())
         tai_state = build_tai_state(
             env=env,
@@ -153,7 +142,7 @@ def run_tai_stage(
         )
 
         tai_dict = tai_agent.choose_action(
-            obs=tai_state,
+            obs=[obs_img, tai_state],
             x_graph=tai_state,
         )
 
@@ -211,14 +200,15 @@ def run_tai_stage(
         return_all += reward
         steps += 1
 
+        next_obs_img, next_obs_tensor = env.get_img(steps)
         should_store = not (done == 1 and steps <= 2 and good != 1 and reward == 0)
         if should_store:
             tai_agent.store_transition(
-                state=[None, tai_state, tai_state],
+                state=[obs_img, tai_state, tai_state],
                 discrete_action=tai_discrete_action,
                 continuous_action=tai_continuous_action,
                 reward=reward,
-                next_state=[None, next_tai_state, next_tai_state],
+                next_state=[next_obs_img, next_tai_state, next_tai_state],
                 done=done,
                 value=tai_value,
                 discrete_log_prob=tai_dict['discrete_log_prob'],
@@ -228,6 +218,7 @@ def run_tai_stage(
         else:
             print(f"  跳过无效样本：done={done}, steps={steps}, good={good}")
 
+        obs_tensor = next_obs_tensor
         prev_robot_state = robot_state
         robot_state = post_robot_state
 
