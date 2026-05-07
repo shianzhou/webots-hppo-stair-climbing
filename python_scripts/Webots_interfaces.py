@@ -81,6 +81,7 @@ class Darwin:
             'grasp_R1_2': 'touch_grasp_R1_2',
             'foot_L1'   : 'touch_foot_L1',
             'foot_L2'   : 'touch_foot_L2',
+            'foot_L3'   : 'touch_foot_L3',
             'foot_R1'   : 'touch_foot_R1',
             'foot_R2'   : 'touch_foot_R2',
             'arm_L1'    : 'touch_arm_L1',

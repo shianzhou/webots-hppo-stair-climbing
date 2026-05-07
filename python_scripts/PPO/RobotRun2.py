@@ -72,12 +72,12 @@ class RobotRun(Darwin):
         self.ankle_delta = 1.305 * self.action_ankle - 0.085
 
         self.success_dist_thresh = 0.04
-        self.distance_reward_scale = 15.0
+        self.distance_reward_scale = 2.0
         self.proximity_reward_scale = 5.0
         self.progress_reward_scale = 80.0
         self.center_progress_reward_scale = 120.0
         self.lateral_penalty_scale = 4.0
-        self.action_penalty_scale = 0.02
+        self.action_penalty_scale = 0.008
         self.step_penalty_scale = 0.012
         self.collision_penalty = -8.0
         self.success_reward = 400.0
@@ -253,10 +253,11 @@ class RobotRun(Darwin):
         dx = float(self.goal[0]) - float(foot_x)
         dy = float(self.goal[1]) - float(foot_y)
 
-        reward = -distance * self.distance_reward_scale
-        if RobotRun._prev_distance is None:
-            reward -= distance
-        else:
+        reward = 0.0
+
+        # Dense guidance: keep scale moderate so success/miss signals remain dominant.
+        reward -= distance * self.distance_reward_scale
+        if RobotRun._prev_distance is not None:
             reward += (RobotRun._prev_distance - distance) * self.progress_reward_scale
 
         center_error = math.sqrt(dx ** 2 + (2.8 * dy) ** 2)

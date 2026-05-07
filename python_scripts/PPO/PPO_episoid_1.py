@@ -1,7 +1,5 @@
 import os
 
-import numpy as np
-
 from python_scripts.PPO.preparation_tool.checkpoint_utils import (
     ensure_dir as _ensure_dir,
     load_catch_model,
@@ -14,6 +12,15 @@ from python_scripts.PPO.preparation_tool.training_manager import TrainingManager
 from python_scripts.PPO.hppo import HPPO as d_hppo
 from python_scripts.PPO.hppo_01 import HPPO as hppo
 from python_scripts.PPO.log_code import CatchAgentLog, TaiAgentLog, DecisionAgentLog
+from python_scripts.PPO.state_inputs import (
+    CATCH_STATE_DIM,
+    DECISION_STATE_DIM,
+    TAI_STATE_DIM,
+    build_catch_state,
+    build_decision_state,
+    build_tai_state,
+    validate_and_clean_data,
+)
 from python_scripts.Project_config import path_list
 from python_scripts.Webots_interfaces import Environment
 
@@ -25,13 +32,13 @@ def init_training_and_logging(path_list, default_tai_episode=1, catch_save_inter
     training_manager = TrainingManager()
 
     # 智能体实例化（统一放置）
-    hppo_agent = hppo(num_servos=2, node_num=19, env_information=None)
-    tai_agent = hppo(num_servos=3, node_num=19, env_information=None)
+    hppo_agent = hppo(num_servos=2, node_num=19, env_information=None, state_dim=CATCH_STATE_DIM)
+    tai_agent = hppo(num_servos=3, node_num=19, env_information=None, state_dim=TAI_STATE_DIM)
     decision_hppo_agent = d_hppo(
         num_servos=1,
         node_num=19,
         env_information=None,
-        state_dim=6,
+        state_dim=DECISION_STATE_DIM,
         use_image_input=False,
     )
 
@@ -83,36 +90,6 @@ def init_training_and_logging(path_list, default_tai_episode=1, catch_save_inter
     }
 
 
-def validate_and_clean_data(data, default_value=0.0):
-    """Validate sensor data and replace NaN/Inf values before PPO uses it."""
-    if isinstance(data, (list, tuple)):
-        return [validate_and_clean_data(x, default_value) for x in data]
-    if isinstance(data, np.ndarray):
-        return np.nan_to_num(data, nan=default_value, posinf=default_value, neginf=-default_value)
-    if isinstance(data, (int, float)):
-        if np.isnan(data) or np.isinf(data):
-            return default_value
-        return data
-    return data
-
-
-def _get_hand_pressure_state(env, feature_dim=6):
-    """Read hand touch sensors as the upper decision state's fixed 6D input."""
-    pressure_values = np.array([
-        float(env.darwin.get_touch_sensor_value('grasp_L1')),
-        float(env.darwin.get_touch_sensor_value('grasp_L1_1')),
-        float(env.darwin.get_touch_sensor_value('grasp_L1_2')),
-        float(env.darwin.get_touch_sensor_value('grasp_R1')),
-        float(env.darwin.get_touch_sensor_value('grasp_R1_1')),
-        float(env.darwin.get_touch_sensor_value('grasp_R1_2')),
-    ], dtype=np.float32)
-
-    state = np.zeros(feature_dim, dtype=np.float32)
-    state[:len(pressure_values)] = pressure_values
-    pressure_detected = bool(np.any(pressure_values > 0.0))
-    return state, pressure_values, pressure_detected
-
-
 def run_tai_stage(
     env,
     tai_agent,
@@ -147,6 +124,7 @@ def run_tai_stage(
     goal = 0
     prev_exec_actions = [0.0, 0.0, 0.0]
     prev_discrete_actions = [1.0, 1.0, 1.0]
+    prev_robot_state = None
     left_step_history = []
 
     print("____________________")
@@ -154,10 +132,18 @@ def run_tai_stage(
     while True:
         obs_img, obs_tensor = env.get_img(steps)
         robot_state = validate_and_clean_data(env.get_robot_state())
+        tai_state = build_tai_state(
+            env=env,
+            robot_state=robot_state,
+            prev_robot_state=prev_robot_state,
+            prev_exec_actions=prev_exec_actions,
+            prev_discrete_actions=prev_discrete_actions,
+            feature_dim=TAI_STATE_DIM,
+        )
 
         tai_dict = tai_agent.choose_action(
-            obs=[obs_img, robot_state],
-            x_graph=robot_state,
+            obs=[obs_img, tai_state],
+            x_graph=tai_state,
         )
 
         tai_discrete_action = tai_dict['discrete_action']
@@ -199,6 +185,15 @@ def run_tai_stage(
         reward = float(reward_env)
 
         left_step_history.append((action_leg_upper, action_leg_lower, action_leg_ankle))
+        post_robot_state = validate_and_clean_data(env.get_robot_state())
+        next_tai_state = build_tai_state(
+            env=env,
+            robot_state=post_robot_state,
+            prev_robot_state=robot_state,
+            prev_exec_actions=[action_leg_upper, action_leg_lower, action_leg_ankle],
+            prev_discrete_actions=[float(discrete_mask[0]), float(discrete_mask[1]), float(discrete_mask[2])],
+            feature_dim=TAI_STATE_DIM,
+        )
         prev_exec_actions = [action_leg_upper, action_leg_lower, action_leg_ankle]
         prev_discrete_actions = [float(discrete_mask[0]), float(discrete_mask[1]), float(discrete_mask[2])]
 
@@ -209,11 +204,11 @@ def run_tai_stage(
         should_store = not (done == 1 and steps <= 2 and good != 1 and reward == 0)
         if should_store:
             tai_agent.store_transition(
-                state=[obs_img, robot_state, robot_state],
+                state=[obs_img, tai_state, tai_state],
                 discrete_action=tai_discrete_action,
                 continuous_action=tai_continuous_action,
                 reward=reward,
-                next_state=[next_obs_img, robot_state, next_state],
+                next_state=[next_obs_img, next_tai_state, next_tai_state],
                 done=done,
                 value=tai_value,
                 discrete_log_prob=tai_dict['discrete_log_prob'],
@@ -224,7 +219,8 @@ def run_tai_stage(
             print(f"  跳过无效样本：done={done}, steps={steps}, good={good}")
 
         obs_tensor = next_obs_tensor
-        robot_state = env.get_robot_state()
+        prev_robot_state = robot_state
+        robot_state = post_robot_state
 
         if steps >= max_steps:
             done = 1
@@ -313,11 +309,8 @@ def run_catch_stage(
     print("____________________")
 
     while True:
-        obs_img, obs_tensor = env.get_img(steps)
-
-        robot_state = env.get_robot_state()
-        obs = (obs_tensor, robot_state)
-        action_dict = hppo_agent.choose_action(obs=obs, x_graph=robot_state)
+        obs_img, obs_tensor, robot_state, obs, x_graph = build_catch_state(env, steps)
+        action_dict = hppo_agent.choose_action(obs=obs, x_graph=x_graph)
 
         d_action = action_dict['discrete_action']
         c_action = action_dict['continuous_action']
@@ -428,7 +421,7 @@ def PPO_episoid_1(model_path=None, max_steps_per_episode=20):
         print(f"==============================")
 
         # ---------- 上层决策 ----------
-        d_pressure_state, d_pressure_values, pressure_detected = _get_hand_pressure_state(env)
+        d_pressure_state, d_pressure_values, pressure_detected = build_decision_state(env)
         print(f"hand_pressure values: {d_pressure_values.tolist()}, detected={pressure_detected}")
         decision_dict, decision, decision_state = robot_run0.choose_action(
             d_pressure_state,

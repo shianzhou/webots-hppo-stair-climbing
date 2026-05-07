@@ -44,16 +44,20 @@ def latest_catch_ckpt(dir_path: str):
 
 def latest_tai_ckpt(dir_path: str):
     files = glob.glob(os.path.join(dir_path, "tai_agent_*_*.ckpt"))
+    files.extend(glob.glob(os.path.join(dir_path, "tai_hppo_*.ckpt")))
     if not files:
         return None, 0, 0
 
     def _nums(file_path: str):
-        base = os.path.basename(file_path).replace(".ckpt", "")
-        parts = base.split("_")
-        try:
-            return int(parts[-2]), int(parts[-1])
-        except Exception:
-            return (0, 0)
+        base = os.path.basename(file_path)
+        match = re.search(r"tai_agent_(\d+)_(\d+)\.ckpt$", base)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+        match = re.search(r"tai_hppo_(\d+)\.ckpt$", base)
+        if match:
+            value = int(match.group(1))
+            return value, value
+        return (0, 0)
 
     selected = max(files, key=_nums)
     total, episode = _nums(selected)
@@ -124,12 +128,30 @@ def load_tai_model(tai_agent, tai_dir: str, default_episode: int = 1) -> int:
         try:
             ckpt = torch.load(selected_tai)
             if isinstance(ckpt, dict) and "policy_tai" in ckpt:
+                ckpt_state_dim = ckpt.get("state_dim")
+                if ckpt_state_dim is not None and int(ckpt_state_dim) != int(getattr(tai_agent, "state_dim", 20)):
+                    raise ValueError(
+                        f"state_dim mismatch: checkpoint={ckpt_state_dim}, agent={getattr(tai_agent, 'state_dim', 20)}"
+                    )
                 tai_agent.policy.load_state_dict(ckpt["policy_tai"])
                 if "optimizer_tai" in ckpt and tai_agent.optimizer:
                     tai_agent.optimizer.load_state_dict(ckpt["optimizer_tai"])
+            elif isinstance(ckpt, dict) and "policy" in ckpt:
+                ckpt_state_dim = ckpt.get("state_dim")
+                if ckpt_state_dim is not None and int(ckpt_state_dim) != int(getattr(tai_agent, "state_dim", 20)):
+                    raise ValueError(
+                        f"state_dim mismatch: checkpoint={ckpt_state_dim}, agent={getattr(tai_agent, 'state_dim', 20)}"
+                    )
+                tai_agent.policy.load_state_dict(ckpt["policy"])
+                if "optimizer_hppo" in ckpt and tai_agent.optimizer:
+                    tai_agent.optimizer.load_state_dict(ckpt["optimizer_hppo"])
+            else:
+                tai_agent.policy.load_state_dict(ckpt)
             print("抬腿模型加载成功！")
         except Exception as exc:
-            print(f"抬腿模型加载失败: {exc}")
+            print(f"抬腿模型加载跳过: {exc}")
+            print("抬腿 checkpoint 与当前输入维度可能不兼容，将从当前网络重新训练。")
+            return default_episode
         return episode
     print("未找到已保存的抬腿模型，从头开始训练")
     return default_episode

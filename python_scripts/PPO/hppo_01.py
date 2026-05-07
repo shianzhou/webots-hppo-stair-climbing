@@ -9,10 +9,11 @@ from torch.distributions import Categorical
 from python_scripts.Project_config import device
 
 class MultiDiscreteActorCritic(nn.Module):
-    def __init__(self, num_servos, node_num):
+    def __init__(self, num_servos, node_num, state_dim=20):
         super().__init__()
         self.num_servos = num_servos
         self.node_num = node_num
+        self.state_dim = int(state_dim)
         # 图像特征提取
         self.conv1 = nn.Conv2d(1, 32, (5, 5), stride=(2, 2), padding=1)
         self.relu = nn.ReLU()
@@ -20,10 +21,10 @@ class MultiDiscreteActorCritic(nn.Module):
         self.conv3 = nn.Conv2d(32, 32, (5, 5), stride=(2, 2), padding=1)
         self.fc0 = nn.Linear(6272, 6000)
         self.fc1 = nn.Linear(6000, 100)
-        self.fc2 = nn.Linear(20, 100)  # 修改输入维度从4改为20
+        self.fc2 = nn.Linear(self.state_dim, 100)
         self.fc3 = nn.Linear(100, 100)
         # 图神经网络部分（可选，简化版）
-        self.fc_graph = nn.Linear(20, 100)  # 修改输入维度从node_num改为20
+        self.fc_graph = nn.Linear(self.state_dim, 100)
         # 共享特征层
         self.fc4 = nn.Linear(300, 200)
         # 多舵机离散动作头
@@ -54,22 +55,16 @@ class MultiDiscreteActorCritic(nn.Module):
         x = torch.flatten(x)
         x = self.fc0(x)
         x = self.fc1(x)
-        min_val1 = torch.min(x)
-        max_val1 = torch.max(x)
-        normalized_data1 = torch.div(torch.sub(x, min_val1), torch.sub(max_val1, min_val1))
+        normalized_data1 = self._minmax_normalize(x)
         # 状态特征
         state = torch.as_tensor(state, dtype=torch.float32).to(device)
         state = self.fc2(state)
         state = self.fc3(state)
-        min_val2 = torch.min(state)
-        max_val2 = torch.max(state)
-        normalized_data2 = torch.div(torch.sub(state, min_val2), torch.sub(max_val2, min_val2))
+        normalized_data2 = self._minmax_normalize(state)
         # 图特征（简化为全连接）
         x_graph = torch.as_tensor(x_graph, dtype=torch.float32).to(device)
         x_graph = self.fc_graph(x_graph)
-        min_val3 = torch.min(x_graph)
-        max_val3 = torch.max(x_graph)
-        normalized_x_graph = torch.div(torch.sub(x_graph, min_val3), torch.sub(max_val3, min_val3))
+        normalized_x_graph = self._minmax_normalize(x_graph)
         # 融合
 
         state_x = torch.cat((normalized_data1, normalized_data2, normalized_x_graph), dim=-1)
@@ -99,11 +94,19 @@ class MultiDiscreteActorCritic(nn.Module):
 
         return discrete_dist,continuous_dist,value
 
+    @staticmethod
+    def _minmax_normalize(tensor):
+        min_val = torch.min(tensor)
+        max_val = torch.max(tensor)
+        denom = torch.clamp(max_val - min_val, min=1e-6)
+        return (tensor - min_val) / denom
+
 class HPPO:
-    def __init__(self, num_servos, node_num, env_information=None ):
+    def __init__(self, num_servos, node_num, env_information=None, state_dim=20):
         self.num_servos = num_servos
         self.node_num = node_num
         self.env_information = env_information
+        self.state_dim = int(state_dim)
         self.device = device
         # 超参数
         self.gamma = 0.99
@@ -118,7 +121,7 @@ class HPPO:
         self.lr_decay = 0.995  # 学习率衰减
         
         # 网络
-        self.policy = MultiDiscreteActorCritic(num_servos, node_num).to(device)
+        self.policy = MultiDiscreteActorCritic(num_servos, node_num, state_dim=self.state_dim).to(device)
         
         # 优化器 - 使用更保守的学习率
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
@@ -358,6 +361,7 @@ class HPPO:
     def save_checkpoint(self, save_path, episode=None):
         checkpoint = {
             "episode": episode,
+            "state_dim": self.state_dim,
             "policy": self.policy.state_dict(),
             "optimizer_hppo": self.optimizer.state_dict() if self.optimizer else None,
             "optimizer_d": self.optimizer_d.state_dict() if self.optimizer_d else None,
