@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 from dataclasses import dataclass
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ class Entry:
     source: Path
     dest: Path
     enabled: bool
+    title: str
+    nav: str
 
 
 def load_config() -> dict[str, Any]:
@@ -60,7 +63,9 @@ def parse_entries(config: dict[str, Any]) -> tuple[Path, Path, list[Entry]]:
         source = (source_root / raw["source"]).resolve()
         dest = (target_root / raw.get("dest", raw["source"])).resolve()
         enabled = bool(raw.get("enabled", True))
-        entries.append(Entry(source=source, dest=dest, enabled=enabled))
+        title = str(raw.get("title") or Path(raw.get("dest", raw["source"])).stem)
+        nav = str(raw.get("nav") or "文档")
+        entries.append(Entry(source=source, dest=dest, enabled=enabled, title=title, nav=nav))
 
     return source_root, target_root, entries
 
@@ -87,6 +92,16 @@ def entry_dest_for_file(entry: Entry, source: Path) -> Path:
         return entry.dest
     rel = source.relative_to(entry.source)
     return entry.dest / rel
+
+
+def entry_title_for_file(entry: Entry, source: Path) -> str:
+    if entry.source.is_file():
+        return entry.title
+
+    rel = source.relative_to(entry.source)
+    if rel.name.lower() in {"index.md", "readme.md"}:
+        return entry.title
+    return f"{entry.title} / {source.stem}"
 
 
 def build_publish_index(entries: list[Entry]) -> dict[str, Path]:
@@ -184,6 +199,61 @@ def copy_entry(
     return actions
 
 
+def nav_path_for_dest(target_root: Path, dest: Path) -> str:
+    rel = dest.relative_to(ROOT / "docs")
+    return rel.as_posix()
+
+
+def build_nav(config: dict[str, Any], target_root: Path, entries: list[Entry]) -> list[Any]:
+    nav: list[Any] = [{"Home": "index.md"}]
+    groups: "OrderedDict[str, list[dict[str, str]]]" = OrderedDict()
+
+    for entry in entries:
+        if not entry.enabled or not entry.source.exists():
+            continue
+
+        for source in iter_entry_files(entry):
+            if source.suffix.lower() not in TEXT_SUFFIXES:
+                continue
+            dest = entry_dest_for_file(entry, source)
+            ensure_inside(dest, target_root)
+            title = entry_title_for_file(entry, source)
+            groups.setdefault(entry.nav, []).append({title: nav_path_for_dest(target_root, dest)})
+
+    for group_name, pages in groups.items():
+        if len(pages) == 1 and config.get("flatten_single_page_nav", False):
+            nav.extend(pages)
+        else:
+            nav.append({group_name: pages})
+
+    return nav
+
+
+def update_mkdocs_nav(nav: list[Any], dry_run: bool) -> None:
+    mkdocs_path = ROOT / "mkdocs.yml"
+    current = mkdocs_path.read_text(encoding="utf-8")
+    nav_yaml = yaml.dump(
+        {"nav": nav},
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+        width=120,
+    ).rstrip()
+
+    if dry_run:
+        print("would update mkdocs.yml nav:")
+        print(nav_yaml)
+        return
+
+    if re.search(r"(?m)^nav:\n", current):
+        rendered = re.sub(r"(?ms)^nav:\n.*\Z", nav_yaml + "\n", current)
+    else:
+        rendered = current.rstrip() + "\n\n" + nav_yaml + "\n"
+
+    with mkdocs_path.open("w", encoding="utf-8", newline="\n") as fh:
+        fh.write(rendered)
+
+
 def reset_target(target_root: Path, dry_run: bool) -> None:
     ensure_inside(target_root, ROOT / "docs")
     if target_root.exists():
@@ -220,6 +290,9 @@ def main() -> int:
     for entry in enabled_entries:
         for action in copy_entry(entry, target_root, publish_index, args.dry_run):
             print(action)
+
+    nav = build_nav(config, target_root, entries)
+    update_mkdocs_nav(nav, args.dry_run)
 
     if disabled_entries:
         print("disabled:")

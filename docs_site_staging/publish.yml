@@ -77,3 +77,9 @@ entries:
     title: "修改日志"
     nav: "日志"
     enabled: false
+
+  - source: "网页使用手册.md"
+    dest: "project/使用日志.md"
+    title: "网页使用手册"
+    nav: "使用文档"
+    enabled: true
