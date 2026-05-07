@@ -6,22 +6,50 @@ source_root: "D:/obsidian/计划与随笔/2026年/强化学习"
 target_root: "docs/notes"
 
 entries:
-  - source: "项目重构"
-    dest: "project"
+  - source: "项目重构/总体文件概览.md"
+    dest: "project/总体文件概览.md"
+    enabled: true
+
+  - source: "项目重构/Webots_interface.py.md"
+    dest: "project/Webots_interface.py.md"
+    enabled: true
+
+  - source: "项目重构/关于网络/状态输入.md"
+    dest: "project/关于网络/状态输入.md"
+    enabled: true
+
+  - source: "项目重构/训练流程/PPO_episoid_1训练流程说明书.md"
+    dest: "project/训练流程/PPO_episoid_1训练流程说明书.md"
+    enabled: true
+
+  - source: "项目重构/训练流程/train manager在干什么.md"
+    dest: "project/训练流程/train manager在干什么.md"
+    enabled: true
+
+  - source: "项目重构/关于robotRUN/总体说明.md"
+    dest: "project/关于robotRUN/总体说明.md"
+    enabled: true
+
+  - source: "项目重构/关于robotRUN/RobotRun0_决策层"
+    dest: "project/关于robotRUN/RobotRun0_决策层"
+    enabled: true
+
+  - source: "项目重构/关于robotRUN/RobotRun1_抓取层"
+    dest: "project/关于robotRUN/RobotRun1_抓取层"
+    enabled: true
+
+  - source: "项目重构/关于robotRUN/RobotRun2_踩踏层"
+    dest: "project/关于robotRUN/RobotRun2_踩踏层"
+    enabled: true
+
+  - source: "项目重构/关于日志的方法.md"
+    dest: "project/关于日志的方法.md"
     enabled: true
 
   - source: "单智能体"
     dest: "algorithms/single-agent"
-    enabled: true
+    enabled: false
 
   - source: "修改日志.md"
     dest: "logs/修改日志.md"
-    enabled: true
-
-  - source: "关于测试代码.md"
-    dest: "experiments/关于测试代码.md"
-    enabled: false
-
-  - source: "prompt"
-    dest: "drafts/prompt"
     enabled: false

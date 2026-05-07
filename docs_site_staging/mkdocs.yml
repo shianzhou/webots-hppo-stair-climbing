@@ -1,5 +1,5 @@
 site_name: webots-hppo-stair-climbing
-site_description: Webots humanoid stair-climbing reinforcement learning notes and research docs.
+site_description: Webots HPPO stair-climbing project code documentation.
 site_author: SiYou
 repo_name: webots-hppo-stair-climbing
 repo_url: https://github.com/YOUR_GITHUB_USERNAME/webots-hppo-stair-climbing
@@ -36,8 +36,8 @@ theme:
     text: Noto Sans Simplified Chinese
     code: JetBrains Mono
   features:
-    - navigation.tabs
     - navigation.sections
+    - navigation.expand
     - navigation.top
     - navigation.indexes
     - toc.follow
@@ -92,41 +92,19 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Overview: getting-started/index.md
-      - Local Preview: getting-started/local-preview.md
-      - Publishing Workflow: getting-started/publishing-workflow.md
-  - RL Foundations:
-      - Overview: foundations/index.md
-  - Algorithms:
-      - Overview: algorithms/index.md
-      - Single Agent HPPO: notes/algorithms/single-agent/单HPPO训练流程.md
-      - Network Settings: notes/algorithms/single-agent/关于网络设置.md
-      - Model Saving: notes/algorithms/single-agent/关于模型保存.md
-  - Webots HPPO Project:
-      - Overview: notes/project/总体文件概览.md
-      - Webots Interface: notes/project/Webots_interface.py.md
-      - State Inputs: notes/project/关于网络/状态输入.md
-  - Training Pipeline:
-      - PPO Episode 1: notes/project/训练流程/PPO_episoid_1训练流程说明书.md
+  - 项目代码说明:
+      - 总体文件概览: notes/project/总体文件概览.md
+      - Webots 接口: notes/project/Webots_interface.py.md
+      - 状态输入: notes/project/关于网络/状态输入.md
+      - 日志方法: notes/project/关于日志的方法.md
+  - 训练流程:
+      - PPO_episoid_1: notes/project/训练流程/PPO_episoid_1训练流程说明书.md
       - Train Manager: notes/project/训练流程/train manager在干什么.md
-  - RobotRun Layers:
+  - RobotRun 分层:
       - Overview: notes/project/关于robotRUN/总体说明.md
-      - Decision Layer:
-          - Flow: notes/project/关于robotRUN/RobotRun0_决策层/01_总流程与动作逻辑.md
-          - Functions: notes/project/关于robotRUN/RobotRun0_决策层/02_函数说明.md
-      - Catch Layer:
-          - Flow: notes/project/关于robotRUN/RobotRun1_抓取层/01_总流程与动作逻辑.md
-          - Functions: notes/project/关于robotRUN/RobotRun1_抓取层/02_函数说明.md
-      - Step Layer:
-          - Flow: notes/project/关于robotRUN/RobotRun2_踩踏层/01_总流程与动作逻辑.md
-          - Functions: notes/project/关于robotRUN/RobotRun2_踩踏层/02_函数说明.md
-  - Experiments:
-      - Overview: experiments/index.md
-      - Training Results: experiments/training-results.md
-  - Logs:
-      - Overview: logs/index.md
-      - Changelog: notes/logs/修改日志.md
-  - API Reference:
-      - Overview: api/index.md
-  - Changelog: changelog.md
+      - 决策层流程: notes/project/关于robotRUN/RobotRun0_决策层/01_总流程与动作逻辑.md
+      - 决策层函数: notes/project/关于robotRUN/RobotRun0_决策层/02_函数说明.md
+      - 抓取层流程: notes/project/关于robotRUN/RobotRun1_抓取层/01_总流程与动作逻辑.md
+      - 抓取层函数: notes/project/关于robotRUN/RobotRun1_抓取层/02_函数说明.md
+      - 踩踏层流程: notes/project/关于robotRUN/RobotRun2_踩踏层/01_总流程与动作逻辑.md
+      - 踩踏层函数: notes/project/关于robotRUN/RobotRun2_踩踏层/02_函数说明.md
