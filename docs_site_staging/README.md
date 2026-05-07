@@ -1,16 +1,18 @@
 # webots-hppo-stair-climbing
 
-MkDocs + Material documentation site for Webots HPPO stair-climbing research notes.
+MkDocs + Material documentation site for Webots HPPO stair-climbing project code notes.
+
+[打开项目代码说明网站](site/index.html)
+
+[文档首页源码](docs/index.md)
 
 ## Local preview
 
 ```powershell
-cd D:\rl-research-docs
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-python scripts\sync_obsidian.py
-mkdocs serve
+cd E:\project_MultiAgent_h_change
+conda activate rl_env
+python docs_site_staging\scripts\sync_obsidian.py
+python -m mkdocs serve -f docs_site_staging\mkdocs.yml
 ```
 
 ## Select published notes
@@ -18,8 +20,8 @@ mkdocs serve
 Edit `publish.yml`, then run:
 
 ```powershell
-python scripts\sync_obsidian.py --dry-run
-python scripts\sync_obsidian.py
+python docs_site_staging\scripts\sync_obsidian.py --dry-run
+python docs_site_staging\scripts\sync_obsidian.py
 ```
 
 Only files selected in `publish.yml` are copied from Obsidian into `docs/notes`.

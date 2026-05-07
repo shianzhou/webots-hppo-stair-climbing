@@ -7,7 +7,7 @@ edit_uri: edit/main/docs/
 
 docs_dir: docs
 site_dir: site
-use_directory_urls: true
+use_directory_urls: false
 
 theme:
   name: material
@@ -36,10 +36,8 @@ theme:
     text: Noto Sans Simplified Chinese
     code: JetBrains Mono
   features:
-    - navigation.sections
     - navigation.expand
     - navigation.top
-    - navigation.indexes
     - toc.follow
     - search.highlight
     - search.share
@@ -92,19 +90,16 @@ extra_css:
 
 nav:
   - Home: index.md
-  - 项目代码说明:
-      - 总体文件概览: notes/project/总体文件概览.md
-      - Webots 接口: notes/project/Webots_interface.py.md
-      - 状态输入: notes/project/关于网络/状态输入.md
-      - 日志方法: notes/project/关于日志的方法.md
-  - 训练流程:
-      - PPO_episoid_1: notes/project/训练流程/PPO_episoid_1训练流程说明书.md
-      - Train Manager: notes/project/训练流程/train manager在干什么.md
-  - RobotRun 分层:
-      - Overview: notes/project/关于robotRUN/总体说明.md
-      - 决策层流程: notes/project/关于robotRUN/RobotRun0_决策层/01_总流程与动作逻辑.md
-      - 决策层函数: notes/project/关于robotRUN/RobotRun0_决策层/02_函数说明.md
-      - 抓取层流程: notes/project/关于robotRUN/RobotRun1_抓取层/01_总流程与动作逻辑.md
-      - 抓取层函数: notes/project/关于robotRUN/RobotRun1_抓取层/02_函数说明.md
-      - 踩踏层流程: notes/project/关于robotRUN/RobotRun2_踩踏层/01_总流程与动作逻辑.md
-      - 踩踏层函数: notes/project/关于robotRUN/RobotRun2_踩踏层/02_函数说明.md
+  - 总体文件概览: notes/project/总体文件概览.md
+  - Webots 接口: notes/project/Webots_interface.py.md
+  - 状态输入: notes/project/关于网络/状态输入.md
+  - 日志方法: notes/project/关于日志的方法.md
+  - PPO_episoid_1 训练流程: notes/project/训练流程/PPO_episoid_1训练流程说明书.md
+  - Train Manager: notes/project/训练流程/train manager在干什么.md
+  - RobotRun 总体说明: notes/project/关于robotRUN/总体说明.md
+  - RobotRun0 决策层流程: notes/project/关于robotRUN/RobotRun0_决策层/01_总流程与动作逻辑.md
+  - RobotRun0 决策层函数: notes/project/关于robotRUN/RobotRun0_决策层/02_函数说明.md
+  - RobotRun1 抓取层流程: notes/project/关于robotRUN/RobotRun1_抓取层/01_总流程与动作逻辑.md
+  - RobotRun1 抓取层函数: notes/project/关于robotRUN/RobotRun1_抓取层/02_函数说明.md
+  - RobotRun2 踩踏层流程: notes/project/关于robotRUN/RobotRun2_踩踏层/01_总流程与动作逻辑.md
+  - RobotRun2 踩踏层函数: notes/project/关于robotRUN/RobotRun2_踩踏层/02_函数说明.md
