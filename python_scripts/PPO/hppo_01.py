@@ -9,11 +9,12 @@ from torch.distributions import Categorical
 from python_scripts.Project_config import device
 
 class MultiDiscreteActorCritic(nn.Module):
-    def __init__(self, num_servos, node_num, state_dim=20):
+    def __init__(self, num_servos, node_num, state_dim=20, use_image_input=True):
         super().__init__()
         self.num_servos = num_servos
         self.node_num = node_num
         self.state_dim = int(state_dim)
+        self.use_image_input = bool(use_image_input)
         # 图像特征提取
         self.conv1 = nn.Conv2d(1, 32, (5, 5), stride=(2, 2), padding=1)
         self.relu = nn.ReLU()
@@ -41,8 +42,10 @@ class MultiDiscreteActorCritic(nn.Module):
         # Critic头
         self.critic = nn.Linear(200, 1)
 
-    def forward(self, x, state, x_graph):
-        # 图像特征
+    def _image_features(self, x):
+        if not self.use_image_input or x is None:
+            return torch.zeros(100, dtype=torch.float32, device=device)
+
         x = torch.as_tensor(x, dtype=torch.float32).to(device)
         # 上游传入的x通常已是[C,H,W]=(1,H,W)，与PPO保持一致，这里仅增加batch维
         x = torch.unsqueeze(x, dim=0)  # [N=1,C,H,W]
@@ -55,7 +58,10 @@ class MultiDiscreteActorCritic(nn.Module):
         x = torch.flatten(x)
         x = self.fc0(x)
         x = self.fc1(x)
-        normalized_data1 = self._minmax_normalize(x)
+        return x
+
+    def forward(self, x, state, x_graph):
+        normalized_data1 = self._minmax_normalize(self._image_features(x))
         # 状态特征
         state = torch.as_tensor(state, dtype=torch.float32).to(device)
         state = self.fc2(state)
@@ -102,11 +108,12 @@ class MultiDiscreteActorCritic(nn.Module):
         return (tensor - min_val) / denom
 
 class HPPO:
-    def __init__(self, num_servos, node_num, env_information=None, state_dim=20):
+    def __init__(self, num_servos, node_num, env_information=None, state_dim=20, use_image_input=True):
         self.num_servos = num_servos
         self.node_num = node_num
         self.env_information = env_information
         self.state_dim = int(state_dim)
+        self.use_image_input = bool(use_image_input)
         self.device = device
         # 超参数
         self.gamma = 0.99
@@ -121,7 +128,12 @@ class HPPO:
         self.lr_decay = 0.995  # 学习率衰减
         
         # 网络
-        self.policy = MultiDiscreteActorCritic(num_servos, node_num, state_dim=self.state_dim).to(device)
+        self.policy = MultiDiscreteActorCritic(
+            num_servos,
+            node_num,
+            state_dim=self.state_dim,
+            use_image_input=self.use_image_input,
+        ).to(device)
         
         # 优化器 - 使用更保守的学习率
         self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.lr)
@@ -143,12 +155,33 @@ class HPPO:
         self.dones = []
 
 
-    def choose_action(self, obs, x_graph):
+    @staticmethod
+    def _looks_like_observation_tuple(obs):
+        if isinstance(obs, tuple) and len(obs) >= 2:
+            return True
+        if isinstance(obs, list) and len(obs) in (2, 3):
+            return not np.isscalar(obs[0])
+        return False
+
+    @classmethod
+    def _split_obs(cls, obs, x_graph=None):
+        if cls._looks_like_observation_tuple(obs):
+            img_input = obs[0]
+            state_input = obs[1]
+            graph_input = x_graph if x_graph is not None else (obs[2] if len(obs) > 2 else state_input)
+        else:
+            img_input = None
+            state_input = obs
+            graph_input = x_graph if x_graph is not None else obs
+        return img_input, state_input, graph_input
+
+    def choose_action(self, obs, x_graph=None):
         with torch.no_grad():
+            img_input, state_input, graph_input = self._split_obs(obs, x_graph)
             discrete_dist, continuous_dist , value= self.policy(
-                x=obs[0],
-                state=obs[1],
-                x_graph=x_graph
+                x=img_input,
+                state=state_input,
+                x_graph=graph_input
             )
 
             discrete_action = discrete_dist.sample()  # 采样离散动作
@@ -263,10 +296,11 @@ class HPPO:
 
             # 批量处理状态
             for i in range(len(batch_states)):
+                img_input, state_input, graph_input = self._split_obs(batch_states[i])
                 discrete_dist, continuous_dist, value = self.policy(
-                    x=batch_states[i][0],
-                    state=batch_states[i][1],
-                    x_graph=batch_states[i][2]
+                    x=img_input,
+                    state=state_input,
+                    x_graph=graph_input
                 )
                 all_discrete_dists.append(discrete_dist)
                 all_continuous_dists.append(continuous_dist)
@@ -362,6 +396,7 @@ class HPPO:
         checkpoint = {
             "episode": episode,
             "state_dim": self.state_dim,
+            "use_image_input": self.use_image_input,
             "policy": self.policy.state_dict(),
             "optimizer_hppo": self.optimizer.state_dict() if self.optimizer else None,
             "optimizer_d": self.optimizer_d.state_dict() if self.optimizer_d else None,

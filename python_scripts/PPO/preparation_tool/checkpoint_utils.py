@@ -133,6 +133,12 @@ def load_tai_model(tai_agent, tai_dir: str, default_episode: int = 1) -> int:
                     raise ValueError(
                         f"state_dim mismatch: checkpoint={ckpt_state_dim}, agent={getattr(tai_agent, 'state_dim', 20)}"
                     )
+                ckpt_use_image = ckpt.get("use_image_input")
+                if ckpt_use_image is not None and bool(ckpt_use_image) != bool(getattr(tai_agent, "use_image_input", True)):
+                    raise ValueError(
+                        f"use_image_input mismatch: checkpoint={ckpt_use_image}, "
+                        f"agent={getattr(tai_agent, 'use_image_input', True)}"
+                    )
                 tai_agent.policy.load_state_dict(ckpt["policy_tai"])
                 if "optimizer_tai" in ckpt and tai_agent.optimizer:
                     tai_agent.optimizer.load_state_dict(ckpt["optimizer_tai"])
@@ -141,6 +147,12 @@ def load_tai_model(tai_agent, tai_dir: str, default_episode: int = 1) -> int:
                 if ckpt_state_dim is not None and int(ckpt_state_dim) != int(getattr(tai_agent, "state_dim", 20)):
                     raise ValueError(
                         f"state_dim mismatch: checkpoint={ckpt_state_dim}, agent={getattr(tai_agent, 'state_dim', 20)}"
+                    )
+                ckpt_use_image = ckpt.get("use_image_input")
+                if ckpt_use_image is not None and bool(ckpt_use_image) != bool(getattr(tai_agent, "use_image_input", True)):
+                    raise ValueError(
+                        f"use_image_input mismatch: checkpoint={ckpt_use_image}, "
+                        f"agent={getattr(tai_agent, 'use_image_input', True)}"
                     )
                 tai_agent.policy.load_state_dict(ckpt["policy"])
                 if "optimizer_hppo" in ckpt and tai_agent.optimizer:

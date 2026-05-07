@@ -6,6 +6,7 @@ import numpy as np
 from python_scripts.Project_config import gps_goal1
 
 
+# Keep these dimensions explicit because they must match the PPO network inputs.
 TAI_STATE_DIM = 40
 CATCH_STATE_DIM = 20
 DECISION_STATE_DIM = 6
@@ -26,6 +27,7 @@ def validate_and_clean_data(data, default_value=0.0):
 
 
 def _fixed_state(values, feature_dim, default_value=0.0):
+    """Return a fixed-length float32 vector, truncating or zero-padding as needed."""
     state = np.full(int(feature_dim), float(default_value), dtype=np.float32)
     values = np.asarray(validate_and_clean_data(values), dtype=np.float32).reshape(-1)
     count = min(state.shape[0], values.shape[0])
@@ -35,6 +37,7 @@ def _fixed_state(values, feature_dim, default_value=0.0):
 
 
 def _safe_touch(env, name):
+    """Read a touch sensor through either Darwin or Environment; missing sensors become 0."""
     try:
         return float(env.darwin.get_touch_sensor_value(name))
     except Exception:
@@ -45,6 +48,7 @@ def _safe_touch(env, name):
 
 
 def _safe_gps_values(env):
+    """Read all GPS values; failures return an empty list so callers can fall back to zeros."""
     try:
         return validate_and_clean_data(env.print_gps())
     except Exception:
@@ -52,6 +56,7 @@ def _safe_gps_values(env):
 
 
 def _safe_imu(env):
+    """Normalize IMU readings around the expected Webots resting ranges."""
     acc_feat = [0.0, 0.0, 0.0]
     gyro_feat = [0.0, 0.0, 0.0]
     try:
@@ -77,6 +82,7 @@ def _safe_imu(env):
 
 def build_decision_state(env, feature_dim=DECISION_STATE_DIM):
     """Read hand pressure sensors as the upper decision state's fixed input."""
+    # Order is part of the decision model contract: left hand pressure first, then right.
     pressure_values = np.array([
         _safe_touch(env, 'grasp_L1'),
         _safe_touch(env, 'grasp_L1_1'),
@@ -94,6 +100,7 @@ def build_decision_state(env, feature_dim=DECISION_STATE_DIM):
 def build_catch_state(env, step, feature_dim=CATCH_STATE_DIM):
     """Build the catch stage observation while preserving the existing 20D state."""
     obs_img, obs_tensor = env.get_img(step)
+    # Catch still uses the legacy image + 20 joint-state observation.
     robot_state = _fixed_state(env.get_robot_state(), feature_dim).tolist()
     obs = (obs_tensor, robot_state)
     x_graph = robot_state
@@ -150,6 +157,11 @@ def build_tai_state(
     prev_exec = _fixed_state(prev_exec_actions, 3)
     prev_disc = _fixed_state(prev_discrete_actions, 3)
 
+    # 31 semantic features are written first, then _fixed_state pads to TAI_STATE_DIM.
+    # Layout:
+    # 0-5   leg joint angles, 6-11 joint deltas, 12-16 left-foot target geometry,
+    # 17-22 IMU, 23-25 left-foot touch, 26-28 previous executed actions,
+    # 29-31 previous discrete gates, 32-39 reserved zeros for future tai features.
     feature = [
         idx(10), idx(11), idx(12), idx(13), idx(14), idx(15),
         didx(10), didx(11), didx(12), didx(13), didx(14), didx(15),
